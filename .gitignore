@@ -1,0 +1,13 @@
+# 构建产物(用户本地编译生成, 不入库)
+build/
+*.o
+*.map
+*.lst
+firmware.elf
+firmware.hex
+mi.elf
+mi.hex
+# 系统垃圾
+.DS_Store
+._*
+Thumbs.db
