@@ -15,11 +15,11 @@ if exist build rmdir /s /q build
 mkdir build
 
 set DEF=-D__MSPM0G3507__ -DDeviceFamily_MSPM0G350X
-set INC=-IUser -ISource -ISource\third_party\CMSIS\Core\Include
+set INC=-IUser -IUser\Inc -ISource -ISource\third_party\CMSIS\Core\Include
 set CFLAGS=--target=arm-arm-none-eabi -mcpu=cortex-m0plus -mthumb -Os -ffunction-sections -fdata-sections -c %DEF% %INC%
 
 set OBJS=
-for %%f in (User\user_main.c User\ti_msp_dl_config.c Source\ti\driverlib\*.c Source\ti\driverlib\m0p\*.c Source\ti\driverlib\m0p\sysctl\*.c) do (
+for %%f in (User\user_main.c User\ti_msp_dl_config.c User\Src\*.c Source\ti\driverlib\*.c Source\ti\driverlib\m0p\*.c Source\ti\driverlib\m0p\sysctl\*.c) do (
   "%BIN%\armclang.exe" %CFLAGS% "%%f" -o "build\%%~nf.o"
   if errorlevel 1 ( echo COMPILE_FAIL: %%f & exit /b 1 )
   set OBJS=!OBJS! build\%%~nf.o

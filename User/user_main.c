@@ -26,9 +26,15 @@
  * ========================================================================== */
 
 #include "dcar_api.h"
+#include "board_buzzer.h"   /* 外设: 蜂鸣器 */
+#include "board_oled.h"     /* 外设: OLED 屏 */
+#include "board_keys.h"     /* 外设: 五个按键 */
 
 /* ===== 上电演示开关: 1=上电跑一遍 run_demo(); 0=只锁头待命, 跑你自己的流程 ===== */
 static volatile int g_run_demo = 0;
+
+/* ===== 外设演示开关: 1=蜂鸣器/OLED/按键 上电演示(不动车, 按键→滴一声+OLED显示); 0=关 ===== */
+static volatile int g_periph_demo = 1;
 
 /* 演示序列: 右前12cm → 左前12cm → 直退回原点(全程朝向不变)。验证 Move + 里程计 + 锁头。 */
 static void run_demo_sequence(void){
@@ -42,10 +48,28 @@ static void run_demo_sequence(void){
 }
 
 /* ===== 用户周期回调(内核 1kHz 派发, 默认空。只放很短的非阻塞任务) ===== */
-void UserLoop_100Hz(uint32_t now_ms){ (void)now_ms; }   /* 10ms  一次 */
+void UserLoop_100Hz(uint32_t now_ms){                   /* 10ms  一次 */
+    (void)now_ms;
+    if(g_periph_demo){
+        BoardKeys_Task100Hz();    /* 按键扫描 + 消抖 */
+        BoardBuzzer_Task1kHz();   /* 蜂鸣器定时关(此处 100Hz 派发, 节拍约略) */
+    }
+}
 void UserLoop_50Hz (uint32_t now_ms){ (void)now_ms; }   /* 20ms  一次 */
 void UserLoop_20Hz (uint32_t now_ms){ (void)now_ms; }   /* 50ms  一次 */
-void UserLoop_10Hz (uint32_t now_ms){ (void)now_ms; }   /* 100ms 一次 */
+void UserLoop_10Hz (uint32_t now_ms){                   /* 100ms 一次 */
+    (void)now_ms;
+    if(g_periph_demo){
+        /* 按键按下 → 滴一声 + OLED 显示第几个键 */
+        for(uint8_t k=0; k<BOARD_KEYS_COUNT; k++){
+            if(BoardKeys_WasPressed((BoardKey)k)){
+                BoardBuzzer_BeepOk();
+                BoardOled_SetNumber(2, "KEY", (int32_t)(k+1));
+            }
+        }
+        BoardOled_Task10Hz();     /* OLED 限速刷新 */
+    }
+}
 
 int main(void)
 {
@@ -57,6 +81,16 @@ int main(void)
      * (约4秒, 期间车自动停住采样), 真零偏存进 flash; 之后开机自动读, 把这行再注释回去即可。 */
     // Dcar_GyroCalibrate();
 
+
+    /* ===== 外设上电: 蜂鸣器 / OLED / 按键 初始化 + 开机提示 ===== */
+    if(g_periph_demo){
+        BoardBuzzer_Init();
+        BoardKeys_Init();
+        BoardOled_Init();
+        BoardOled_SetLine(0, "DCAR G3507");
+        BoardOled_SetLine(1, "Peripherals OK");
+        BoardBuzzer_On(); Dcar_Delay(120U); BoardBuzzer_Off();  /* 开机滴一声 */
+    }
 
     if(g_run_demo){              /* ② 上电演示(把 g_run_demo 改 0 可关掉) */
         run_demo_sequence();
