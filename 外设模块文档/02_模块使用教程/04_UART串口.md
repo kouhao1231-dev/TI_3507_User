@@ -6,13 +6,22 @@ UART 用于普通串口收发，也可以接串口型传感器。当前封装使
 
 ## 2. 当前引脚
 
-| UART 信号 | MSPM0G3507 引脚 | 接 USB-TTL |
+| 板子 UART 信号 | MSPM0G3507 引脚 | 接 USB-TTL |
 |---|---|---|
 | `UART2_TX` | `PB17` | 接 `RXD` |
 | `UART2_RX` | `PB18` | 接 `TXD` |
 | `GND` | `GND` | 接 `GND` |
 
-TX/RX 要交叉接。
+TX/RX 要交叉接。注意 USB-TTL 和串口传感器的文字标号容易让人看反：
+
+| 外部设备类型 | 外部设备引脚 | 接到主板 |
+|---|---|---|
+| USB-TTL 调试器 | `RXD` | `PB17 / UART2_TX` |
+| USB-TTL 调试器 | `TXD` | `PB18 / UART2_RX` |
+| 串口传感器模块 | `TX` | `PB18 / UART2_RX` |
+| 串口传感器模块 | `RX` | `PB17 / UART2_TX` |
+
+亚博智能八路灰度属于“串口传感器模块”，所以是亚博 `TX -> PB18`、亚博 `RX -> PB17`。
 
 ## 3. 当前配置
 
@@ -72,6 +81,8 @@ uint32_t BoardUart_GetRxCount(void);
 
 ## 7. 测试方法
 
+这里测试的是 USB-TTL 调试器，不是亚博智能传感器。
+
 1. USB-TTL 的 `RXD` 接 `PB17`。
 2. USB-TTL 的 `TXD` 接 `PB18`。
 3. USB-TTL 的 `GND` 接主板 `GND`。
@@ -93,4 +104,3 @@ uint32_t BoardUart_GetRxCount(void);
 ```
 
 改成需要的波特率后重新编译烧录。
-
