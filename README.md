@@ -16,7 +16,8 @@ lib/
 Source/                  ← TI 官方驱动 + 器件头 + 启动/链接脚本
 build_user.sh            ← Mac/Linux 一键编译
 build_user.bat           ← Windows/Keil 一键编译
-*.uvprojx                ← Keil 图形工程(双击打开)
+DCAR_G3507_User.uvprojx  ← Keil 图形工程(双击打开)
+打开Keil工程.bat          ← Windows 下双击打开 Keil 工程
 ```
 
 ## 编译
@@ -29,7 +30,7 @@ build_user.bat           ← Windows/Keil 一键编译
 
 **Windows(Keil)**
 - 命令行:`build_user.bat`(需要 Keil MDK / ARMClang)
-- 或图形界面:双击 `.uvprojx`,点编译
+- 或图形界面:双击 `DCAR_G3507_User.uvprojx`，再点编译
 
 两边编出来的 `firmware.hex` 功能完全一样。
 
