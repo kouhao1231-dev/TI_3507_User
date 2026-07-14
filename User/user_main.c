@@ -15,10 +15,10 @@
  *  ║ 定时器 : TIMA0(电机PWM)  TIMG0(用户1kHz定时器)  SysTick(125Hz控制环)            ║
  *  ║ SPI    : SPI1 = IMU      (引脚 PINCM24/25/26 + CS)                              ║
  *  ║ UART   : UART0 = 调试遥测 (引脚 PINCM21/22)                                      ║
- *  ║ 编码器 : GPIOA  PA13 / PA21 / PA22 / PA23  (双边沿外部中断 INT_GROUP1)           ║
+ *  ║ 编码器 : M1=PB2/PB3, M2=PA22/PA23  (双边沿外部中断 INT_GROUP1)             ║
  *  ║ 电机方向: GPIOB  PB10 / PB11 / PB13 / PB14                                       ║
  *  ║ 电机PWM : PINCM57(M1 CCP3)  PA9/PINCM20(M2 CCP1)                                 ║
- *  ║ 中断优先级: GPIOA=0  SysTick=1  TIMG0=3  →  你的中断别用 0/1 级(会扰动内核)       ║
+ *  ║ 中断优先级: GPIOA/B=0  SysTick=1  TIMG0=3  →  你的中断别用 0/1 级(会扰动内核)     ║
  *  ║ Flash  : 0x1F800 / 0x1FC00(IMU标定)  0x1F000(license)  →  绝对不要擦这几个扇区   ║
  *  ║ 软规矩 : UserLoop 回调里禁止调阻塞 API(Move/Arc/Delay)/死循环                    ║
  *  ║ 你可以自由使用上面没列出的外设/引脚/定时器(ADC、其它UART、空闲GPIO 等)。        ║
