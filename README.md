@@ -1,13 +1,13 @@
 # DCAR G3507 用户版 SDK
 
 小车底层(电机/编码器/IMU/里程计/锁头串级/速度PID/节点锁)已封装成**闭源内核库**,
-你只写应用代码,通过 `User/dcar_api.h` 的 6 个函数控制小车。**同一份代码 Mac 和 Windows 都能编。**
+你只写应用代码,通过 `User/dcar_api.h` 的公开函数控制小车。**同一份代码 Mac 和 Windows 都能编。**
 
 ## 目录
 ```
 User/                    ← 你改这里
   user_main.c            ← 主程序(写你的比赛流程)
-  dcar_api.h             ← 6 个 API 接口
+  dcar_api.h             ← 用户 API 接口
   DCAR_G3507_用户API说明.md ← 用户手册(必看)
   ti_msp_dl_config.c/.h  ← 板级配置(引脚)
 lib/
@@ -33,6 +33,25 @@ DCAR_G3507_User.uvprojx  ← Keil 图形工程(双击打开)
 - 或图形界面:双击 `DCAR_G3507_User.uvprojx`，再点编译
 
 两边编出来的 `firmware.hex` 功能完全一样。
+
+## 下载与激活顺序
+
+1. 先编译并下载用户程序。
+2. 最后在 DFhelper 中执行“TI版本下载&激活”。
+3. DFhelper 只有在订单授权、License 写入、复位后保存、内核运行时验签四项都通过时，才会显示可正常运行。
+
+License 位于 `0x1F000`，IMU 标定位于 `0x1F800/0x1FC00`。Keil 下载时必须选择
+`Erase Sectors`，不要选择 `Erase Full Chip`。如果激活后又执行了全片擦除，请重新激活。
+
+用户程序也可以调用 `Dcar_IsActivated()`：返回 `1` 表示当前芯片的 License 已通过
+内核运行时验签，返回 `0` 表示未激活、License 丢失或 License 不属于当前芯片。
+例程会在 `Dcar_System_Init()` 后调用 `Dcar_PrintActivationStatus()`，从 UART0@115200
+直接输出 `[DCAR] Activation: ACTIVATED` 或 `[DCAR] Activation: NOT ACTIVATED`。
+
+`Dcar_Move()`、`Dcar_Arc()` 和 `Dcar_Drive()` 都返回 `DcarStatus`。例如前进 10cm
+却未执行时，`DCAR_STATUS_NOT_ACTIVATED` 表示 License 未通过运行时验签，
+`DCAR_STATUS_IMU_ERROR` 表示 IMU 未响应，`DCAR_STATUS_STALLED` 表示编码器持续无动作；
+完整状态表见 `User/DCAR_G3507_用户API说明.md`。
 
 ## 用法
 看 `User/DCAR_G3507_用户API说明.md`。最常用:

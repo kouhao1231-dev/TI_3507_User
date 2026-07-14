@@ -38,7 +38,8 @@ _Min_Stack_Size = 0x80; /* required amount of stack */
 /* Specify the memory areas */
 MEMORY
 {
-    FLASH           (RX)  : ORIGIN = 0x00000000, LENGTH = 0x00020000
+    /* Reserve 0x1F000..0x1FFFF for License and IMU calibration slots. */
+    FLASH           (RX)  : ORIGIN = 0x00000000, LENGTH = 0x0001F000
     SRAM            (RWX) : ORIGIN = 0x20200000, LENGTH = 0x00008000
     BCR_CONFIG      (R)   : ORIGIN = 0x41C00000, LENGTH = 0x000000FF
     BSL_CONFIG      (R)   : ORIGIN = 0x41C00100, LENGTH = 0x00000080

@@ -14,11 +14,24 @@
 /* ---- 系统启动 / 后台服务 ---- */
 void Dcar_System_Init(void);   /* main() 第一句调: 启动全部内核(时钟/驱动/IMU/控制环/定时器/节点锁) */
 void Dcar_Service(void);       /* 放主循环里周期调用: 后台落盘 calib + 串口遥测 */
+int  Dcar_IsActivated(void);   /* 运行时校验本芯片 License: 1=已激活且验签通过, 0=未激活/License无效 */
+void Dcar_PrintActivationStatus(void); /* 从调试串口 UART0@115200 打印真实运行时激活状态 */
 
 /* ---- 运动 API ---- */
-int  Dcar_Move(float dx, float dy, float final_yaw, float speed); /* 位置: 到点+最终朝向. 阻塞走完(可被Stop打断). dx前/dy左(m), final_yaw=相对当前航向增量(rad,0=不变); dx=dy=0时speed当角速度上限 */
-int  Dcar_Arc (float radius, float dyaw, float speed);           /* 圆弧: 半径(m)+转角(rad,±方向)+线速度. 阻塞 */
-void Dcar_Drive(float vx, float yaw_delta);                      /* 速度流式遥控: vx前进(m/s)+yaw_delta航向增量(rad). 非阻塞, 需~200Hz持续刷新, 超~100ms自动停 */
+typedef enum {
+    DCAR_STATUS_OK = 1,              /* 指令已完成(阻塞接口)或已接受(非阻塞接口) */
+    DCAR_STATUS_ABORTED = 0,         /* 被 Dcar_Stop() 主动打断 */
+    DCAR_STATUS_NOT_ACTIVATED = -1,  /* License 未激活、损坏或不属于本芯片 */
+    DCAR_STATUS_INVALID_ARGUMENT = -2,
+    DCAR_STATUS_BUSY = -3,           /* 已有 Move/Arc 正在执行 */
+    DCAR_STATUS_IMU_ERROR = -4,      /* IMU 未响应，无法可靠锁头 */
+    DCAR_STATUS_STALLED = -5,        /* 指令已下发但编码器持续无动作 */
+    DCAR_STATUS_TIMEOUT = -6         /* 有动作但未在合理时间内完成 */
+} DcarStatus;
+
+DcarStatus Dcar_Move(float dx, float dy, float final_yaw, float speed); /* 位置: 到点+最终朝向. 阻塞走完(可被Stop打断). dx前/dy左(m), final_yaw=相对当前航向增量(rad,0=不变); dx=dy=0时speed当角速度上限 */
+DcarStatus Dcar_Arc (float radius, float dyaw, float speed);           /* 圆弧: 半径(m)+转角(rad,±方向)+线速度. 阻塞 */
+DcarStatus Dcar_Drive(float vx, float yaw_delta);                      /* 速度流式遥控: vx前进(m/s)+yaw_delta航向增量(rad). 非阻塞, 需~200Hz持续刷新, 超~100ms自动停 */
 void Dcar_Stop(void);                                            /* 立即停车锁头, 并打断正在阻塞的 Move/Arc */
 void Dcar_GetOdom(float *x, float *y, float *yaw);               /* 读里程计: 世界系 x,y(m)+航向 yaw(rad). 不要的传 NULL */
 void Dcar_Delay(uint32_t ms);                                    /* 阻塞延时(内核照常在中断里跑) */

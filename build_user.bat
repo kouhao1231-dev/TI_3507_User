@@ -28,7 +28,7 @@ for %%f in (User\user_main.c User\ti_msp_dl_config.c User\Src\*.c Source\ti\driv
 if errorlevel 1 ( echo ASM_FAIL & exit /b 1 )
 set OBJS=!OBJS! build\startup.o
 
-"%BIN%\armlink.exe" --cpu=Cortex-M0+ --scatter="Source\ti\devices\msp\m0p\linker_files\keil\mspm0g3507.sct" --remove --entry=Reset_Handler !OBJS! lib\libdcar_core_keil.lib -o build\firmware.axf
+"%BIN%\armlink.exe" --cpu=Cortex-M0+ --scatter="mspm0g3507.sct" --remove --entry=Reset_Handler !OBJS! lib\libdcar_core_keil.lib -o build\firmware.axf
 if errorlevel 1 ( echo LINK_FAIL: 确认 lib\libdcar_core_keil.lib 存在 & exit /b 1 )
 
 "%BIN%\fromelf.exe" --i32 --output=firmware.hex build\firmware.axf

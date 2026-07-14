@@ -74,6 +74,13 @@ void UserLoop_10Hz (uint32_t now_ms){                   /* 100ms 一次 */
 int main(void)
 {
     Dcar_System_Init();          /* ① 启动全部内核(必须第一句; 之后底层在中断里自动跑) */
+    Dcar_PrintActivationStatus();/* UART0@115200: ACTIVATED / NOT ACTIVATED */
+
+    /* 可选: 用返回值决定未激活时是否停止后续流程。1=已激活, 0=未激活/验签失败。
+     *   if(!Dcar_IsActivated()){
+     *       for(;;){ Dcar_Service(); }   // 不执行后续运动流程
+     *   }
+     */
 
     /* ===== 陀螺零偏校准(空板首次烧录后做一次) =====================================
      * 全新芯片 flash 没存过零偏, 开机自动采样那一秒如果车没放稳, 会采到错零偏 →
@@ -98,7 +105,8 @@ int main(void)
 
     /* ③ 你的比赛流程写这里。Move/Arc 自带阻塞(走完才返回), 直接一条接一条:
      *
-     *   Dcar_Move(0.5f, 0.0f, 0.0f, 0.3f);   // 前进 0.5m
+     *   DcarStatus result = Dcar_Move(0.5f, 0.0f, 0.0f, 0.3f); // 前进 0.5m
+     *   // result==DCAR_STATUS_OK 正常完成; -1 未激活; -4 IMU异常; -5 编码器无动作
      *   Dcar_Move(0,    0,    1.5708f, 2.0f);// 原地左转 90°
      *   Dcar_Arc (0.20f, 1.5708f, 0.15f);    // 半径0.2m 走 90° 弧
      *   Dcar_Delay(500);                     // 停顿 0.5s

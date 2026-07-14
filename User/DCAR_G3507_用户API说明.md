@@ -27,19 +27,76 @@
 
 ---
 
-## 1. 用户 API —— 最简 6 件套
+## 1. 用户 API
 
 | 函数 | 阻塞? | 说明 |
 |---|---|---|
-| `Dcar_Move(dx, dy, Δyaw, speed)` | **阻塞**(可被 Stop 打断) | 位置:到点 + 最终朝向 |
-| `Dcar_Arc(radius, dyaw, speed)` | **阻塞**(可被 Stop 打断) | 圆弧 |
-| `Dcar_Drive(vx, Δyaw)` | **非阻塞**(流式) | 速度遥控,需持续发 |
+| `Dcar_IsActivated()` | 立即 | 运行时验签；返回 1=已激活，0=未激活或 License 无效 |
+| `Dcar_PrintActivationStatus()` | 立即 | UART0@115200 打印真实运行时激活状态 |
+| `Dcar_Move(dx, dy, Δyaw, speed)` | **阻塞**(可被 Stop 打断) | 位置:到点 + 最终朝向；返回 `DcarStatus` |
+| `Dcar_Arc(radius, dyaw, speed)` | **阻塞**(可被 Stop 打断) | 圆弧；返回 `DcarStatus` |
+| `Dcar_Drive(vx, Δyaw)` | **非阻塞**(流式) | 速度遥控；返回是否接受指令 |
 | `Dcar_Stop()` | 立即 | 停车锁头,并打断正在跑的 Move/Arc |
 | `Dcar_GetOdom(&x, &y, &yaw)` | 立即 | 读里程计 |
 | `Dcar_Delay(ms)` | **阻塞** ms | 延时(内核照常在中断跑) |
 
-### 1.1 `int Dcar_Move(float dx, float dy, float final_yaw, float speed)`
-位置指令,一条吃下「直线 / 原地转 / 斜向到点」三种用法。**走完才返回**(返回 1=完成,0=被打断或参数无效)。
+### 1.0 `int Dcar_IsActivated(void)`
+读取本芯片指纹和 Flash `0x1F000` 的 License 并重新验签。必须先调用
+`Dcar_System_Init()`；返回 `1` 表示 License 与当前芯片匹配，返回 `0` 表示未激活、
+License 损坏或 License 属于另一块芯片。该结果不受开发版 `NODELOCK_BYPASS` 影响。
+
+```c
+Dcar_System_Init();
+if (!Dcar_IsActivated()) {
+    for (;;) {
+        Dcar_Service();  // 未激活：不执行后续运动流程
+    }
+}
+Dcar_Move(0.5f, 0.0f, 0.0f, 0.3f);
+```
+
+开机诊断可直接调用 `Dcar_PrintActivationStatus()`。它会在 UART0@115200 输出下面二者之一：
+
+```text
+[DCAR] Activation: ACTIVATED
+[DCAR] Activation: NOT ACTIVATED
+```
+
+SDK 的 `user_main.c` 默认已在 `Dcar_System_Init()` 后调用一次。此打印与
+`Dcar_IsActivated()` 使用同一次真实验签逻辑，不把“License 写入成功”误当成激活成功。
+
+下载程序会擦除程序实际占用的低地址扇区，因此正确顺序是“先下载程序，最后激活”。
+Keil 的 Flash Download 必须使用 `Erase Sectors`，不要使用 `Erase Full Chip`；全片擦除会清掉
+`0x1F000` 的 License 和 `0x1F800/0x1FC00` 的 IMU 标定数据。SDK 的 GCC/Keil 链接脚本
+已把应用区限制在 `0x00000..0x1EFFF`，避免用户代码链接到这些保留区。
+
+### 1.1 运动返回值 `DcarStatus`
+
+三个运动接口都返回同一组明确状态。旧代码可以继续忽略返回值；需要诊断时直接保存或
+`switch` 判断：
+
+| 返回值 | 数值 | 含义 |
+|---|---:|---|
+| `DCAR_STATUS_OK` | 1 | Move/Arc 已完成；Drive 指令已接受 |
+| `DCAR_STATUS_ABORTED` | 0 | 阻塞动作被 `Dcar_Stop()` 主动打断 |
+| `DCAR_STATUS_NOT_ACTIVATED` | -1 | License 未激活、损坏或不属于本芯片 |
+| `DCAR_STATUS_INVALID_ARGUMENT` | -2 | 距离/速度/角度参数无效 |
+| `DCAR_STATUS_BUSY` | -3 | 已有 Move/Arc 正在执行 |
+| `DCAR_STATUS_IMU_ERROR` | -4 | IMU 未响应，不能可靠锁头 |
+| `DCAR_STATUS_STALLED` | -5 | 指令已启动，但编码器持续 2 秒无动作 |
+| `DCAR_STATUS_TIMEOUT` | -6 | 有动作，但超出按距离和速度计算的宽松完成时间 |
+
+```c
+DcarStatus status = Dcar_Move(0.10f, 0.0f, 0.0f, 0.20f);
+if (status == DCAR_STATUS_NOT_ACTIVATED) {
+    // 不是电机问题：当前芯片 License 没通过内核运行时验签
+} else if (status != DCAR_STATUS_OK) {
+    // 根据上表继续定位参数、IMU、编码器或超时
+}
+```
+
+### 1.2 `DcarStatus Dcar_Move(float dx, float dy, float final_yaw, float speed)`
+位置指令,一条吃下「直线 / 原地转 / 斜向到点」三种用法。**走完才返回**。
 
 - `dx` 车体系前后(m):>0 前,<0 后
 - `dy` 车体系左右(m):>0 左,<0 右
@@ -61,13 +118,13 @@ Dcar_Move(0,    0,    -1.5708f, 2.0f);  // 原地右转 90°
 Dcar_Move(0.2f, 0.2f,  0.0f,    0.2f);  // 走到右前(前0.2/左0.2), 末朝向不变
 ```
 
-### 1.2 `int Dcar_Arc(float radius, float dyaw, float speed)`
-圆弧。`radius` 半径(m,>0),`dyaw` 转过的圆心角(rad,>0 逆时针 / <0 顺时针),`speed` 线速度(m/s)。阻塞,走完返回 1。
+### 1.3 `DcarStatus Dcar_Arc(float radius, float dyaw, float speed)`
+圆弧。`radius` 半径(m,>0),`dyaw` 转过的圆心角(rad,>0 逆时针 / <0 顺时针),`speed` 线速度(m/s)。阻塞，走完返回 `DCAR_STATUS_OK`。
 ```c
 Dcar_Arc(0.20f, 1.5708f, 0.15f);  // 半径 0.2m 走 90° 弧, 0.15m/s
 ```
 
-### 1.3 `void Dcar_Drive(float vx, float yaw_delta)`
+### 1.4 `DcarStatus Dcar_Drive(float vx, float yaw_delta)`
 流式速度遥控(**非阻塞**,立即返回)。`vx` 前进速度(m/s),`yaw_delta` 每次调用给目标航向加的增量(rad)。
 - ⚠ 差速轮**没有横移 vy**,只有前进 + 转向。
 - ⚠ **必须持续调用**(建议 ~200Hz,即每 ~5ms 一次)。**超过 ~100ms 没有新指令,看门狗自动停车**——这是失效保护:你的程序卡死/跑飞时车会自己停。
@@ -77,16 +134,16 @@ for(int i=0;i<300;i++){ Dcar_Drive(0.2f, 0.01f); Dcar_Delay(5); }  // 边走边�
 Dcar_Stop();
 ```
 
-### 1.4 `void Dcar_Stop(void)`
+### 1.5 `void Dcar_Stop(void)`
 立即停车并锁定当前航向。**还能打断正在阻塞的 `Move`/`Arc`**:你可以把它放进 `UserLoop` 回调里(比如某个传感器/按键触发),实现「主流程跑动作时随时急停」。
 
-### 1.5 `void Dcar_GetOdom(float *x, float *y, float *yaw)`
+### 1.6 `void Dcar_GetOdom(float *x, float *y, float *yaw)`
 读里程计:世界系位置 `x`、`y`(m)+ 航向 `yaw`(rad)。不需要的参数传 `NULL`。
 ```c
 float x, y, yaw;  Dcar_GetOdom(&x, &y, &yaw);
 ```
 
-### 1.6 `void Dcar_Delay(uint32_t ms)`
+### 1.7 `void Dcar_Delay(uint32_t ms)`
 阻塞延时 `ms` 毫秒。**延时期间内核照常在中断里跑**(锁头、速度环、里程计都不停),只是挡住 `main()` 往下执行;顺带处理后台 calib 落盘。用来在两个动作之间插停顿。
 
 ---
