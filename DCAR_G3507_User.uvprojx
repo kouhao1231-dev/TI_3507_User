@@ -432,6 +432,26 @@
               <FilePath>.\User\Src\digital_gray8.c</FilePath>
             </File>
             <File>
+              <FileName>route_logic.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\User\Src\route_logic.c</FilePath>
+            </File>
+            <File>
+              <FileName>route_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\User\Src\route_control.c</FilePath>
+            </File>
+            <File>
+              <FileName>gray_relocalization.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\User\Src\gray_relocalization.c</FilePath>
+            </File>
+            <File>
+              <FileName>route_log.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\User\Src\route_log.c</FilePath>
+            </File>
+            <File>
               <FileName>gray8.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\User\Src\gray8.c</FilePath>
@@ -470,6 +490,31 @@
               <FileName>digital_gray8.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\User\Inc\digital_gray8.h</FilePath>
+            </File>
+            <File>
+              <FileName>route_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\route_config.h</FilePath>
+            </File>
+            <File>
+              <FileName>route_logic.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\route_logic.h</FilePath>
+            </File>
+            <File>
+              <FileName>route_control.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\route_control.h</FilePath>
+            </File>
+            <File>
+              <FileName>gray_relocalization.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\gray_relocalization.h</FilePath>
+            </File>
+            <File>
+              <FileName>route_log.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\route_log.h</FilePath>
             </File>
             <File>
               <FileName>gray8.h</FileName>

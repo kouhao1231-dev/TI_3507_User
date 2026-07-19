@@ -1,127 +1,178 @@
-/* ============================================================================
- *  DCAR G3507 —— 用户主程序 (这个文件是给你改的)
- * ----------------------------------------------------------------------------
- *  小车底层(时钟/电机/编码器/IMU/里程计/锁头串级/速度PID/节点锁)全部封装在
- *  内核库 libdcar_core 里, 已经在中断里自动运行。你只在这个文件里写应用逻辑,
- *  通过 dcar_api.h 的函数控制小车。完整用法见 DCAR_G3507_用户API说明.md。
+/*
+ * 2024 电赛 H 题四段式高速路线——程序入口
  *
- *  ┌──────────────────────── 三层结构 ────────────────────────┐
- *  │ 内核(8ms中断, 自动跑, 你碰不到也不用碰)                   │
- *  │ 用户定时器回调 UserLoop_*(1kHz派发, 只放短的非阻塞任务)   │
- *  │ main()(这里, 写比赛流程: Move/Arc/Delay 顺序执行)         │
- *  └──────────────────────────────────────────────────────────┘
+ * 【调参先看这里】
+ * 所有允许人工修改的运动参数都集中在：
+ *     User/Inc/route_config.h
+ * 不要在本文件或 route_control.c 中直接改运动数字。
  *
- *  ╔═══════════════════ ⚠ 这些底层资源已被内核占用, 别碰/别复用 ⚠ ═══════════════════╗
- *  ║ 定时器 : TIMA0(电机PWM)  TIMG0(用户1kHz定时器)  SysTick(125Hz控制环)            ║
- *  ║ SPI    : SPI1 = IMU      (引脚 PINCM24/25/26 + CS)                              ║
- *  ║ UART   : UART0 = 调试遥测 (引脚 PINCM21/22)                                      ║
- *  ║ 编码器 : M1=PB2/PB3, M2=PA22/PA23  (双边沿外部中断 INT_GROUP1)             ║
- *  ║ 电机方向: GPIOB  PB10 / PB11 / PB13 / PB14                                       ║
- *  ║ 电机PWM : PINCM57(M1 CCP3)  PA9/PINCM20(M2 CCP1)                                 ║
- *  ║ 中断优先级: GPIOA/B=0  SysTick=1  TIMG0=3  →  你的中断别用 0/1 级(会扰动内核)     ║
- *  ║ Flash  : 0x1F800 / 0x1FC00(IMU标定)  0x1F000(license)  →  绝对不要擦这几个扇区   ║
- *  ║ 软规矩 : UserLoop 回调里禁止调阻塞 API(Move/Arc/Delay)/死循环                    ║
- *  ║ 你可以自由使用上面没列出的外设/引脚/定时器(ADC、其它UART、空闲GPIO 等)。        ║
- *  ╚═══════════════════════════════════════════════════════════════════════════════╝
- * ========================================================================== */
+ * 常用参数及其所在宏：
+ *   - 单次/连续运行：
+ *       ROUTE_CONTINUOUS_RUN
+ *   - 连续运行圈数：
+ *       ROUTE_LAPS
+ *   - 全程前进速度：
+ *       ROUTE_RUN_SPEED_MPS
+ *   - 左周期第一小转角、直线长度、第二小转角：
+ *       ROUTE_LEFT_TURN_IN_RELEASE_YAW_RAD
+ *       ROUTE_LEFT_STRAIGHT_DISTANCE_M
+ *       ROUTE_LEFT_TURN_OUT_RELEASE_YAW_RAD
+ *   - 右周期第一小转角、直线长度、第二小转角：
+ *       ROUTE_RIGHT_TURN_IN_RELEASE_YAW_RAD
+ *       ROUTE_RIGHT_STRAIGHT_DISTANCE_M
+ *       ROUTE_RIGHT_TURN_OUT_RELEASE_YAW_RAD
+ *   - 灰度只记录/允许介入运动：
+ *       ROUTE_GRAY_CAPTURE_ENABLE
+ *       ROUTE_GRAY_CORRECTION_ENABLE
+ *
+ * 【代码分工】
+ *   - route_config.h：唯一调参入口；每个宏旁边写有增减方向。
+ *   - route_control.c：四段运动的执行顺序、K1/K2 和任务调度。
+ *   - route_logic.c：角度、按键、灰度和单周期计划的纯数学逻辑。
+ *   - gray_relocalization.c：灰度采样和圆弧端点记录；失效不阻塞运动。
+ *   - route_log.c：停车后压缩、缓存并发送诊断日志。
+ *
+ * 【本文件职责】
+ *   1. 初始化 DCar、可选串口、开发板 K1/K2 和灰度模块；
+ *   2. 在 100 Hz 回调中转交按键样本与灰度采样；
+ *   3. 把主线程交给四段式路线调度器。
+ *
+ * 本文件不包含历史路线、巡线分支、诊断分支或运动数学。
+ */
 
+#include "board_uart.h"
 #include "dcar_api.h"
-#include "board_buzzer.h"   /* 外设: 蜂鸣器 */
-#include "board_oled.h"     /* 外设: OLED 屏 */
-#include "board_keys.h"     /* 外设: 五个按键 */
+#include "gray_relocalization.h"
+#include "route_control.h"
+#include "ti_msp_dl_config.h"
 
-/* ===== 上电演示开关: 1=上电跑一遍 run_demo(); 0=只锁头待命, 跑你自己的流程 ===== */
-static volatile int g_run_demo = 0;
+#include <stdint.h>
 
-/* ===== 外设演示开关: 1=蜂鸣器/OLED/按键 上电演示(不动车, 按键→滴一声+OLED显示); 0=关 ===== */
-static volatile int g_periph_demo = 1;
+/* 开发板 K1 的 GPIO 位：USRKEY 接在 PA18，按下时读到高电平。 */
+#define DEVBOARD_K1_PIN DL_GPIO_PIN_18
 
-/* 演示序列: 右前12cm → 左前12cm → 直退回原点(全程朝向不变)。验证 Move + 里程计 + 锁头。 */
-static void run_demo_sequence(void){
-    Dcar_Delay(1000U);                          /* 上电先静置 1s, 让零偏/姿态稳 */
-    Dcar_Move( 0.0849f, -0.0849f, 0.0f, 0.18f); /* 1) 右前方 45° 走 12cm */
-    Dcar_Delay(500U);
-    Dcar_Move( 0.0849f,  0.0849f, 0.0f, 0.18f); /* 2) 左前方 45° 走 12cm */
-    Dcar_Delay(500U);
-    Dcar_Move(-0.1697f, 0.0f,    0.0f, 0.30f);  /* 3) 直退 ~17cm 回原点(dy=0,Δyaw=0 → 纯倒车不掉头) */
-    Dcar_Stop();
+/* 开发板 K1 的引脚复用编号：PA18 对应 SysConfig 的 PINCM40。 */
+#define DEVBOARD_K1_IOMUX IOMUX_PINCM40
+
+/* 开发板 K2 的 GPIO 位：K2 接在 PB21，按下时读到低电平。 */
+#define DEVBOARD_K2_PIN DL_GPIO_PIN_21
+
+/* 开发板 K2 的引脚复用编号：PB21 对应 SysConfig 的 PINCM49。 */
+#define DEVBOARD_K2_IOMUX IOMUX_PINCM49
+
+/* 置 1 后，100 Hz 回调才允许读取 K1/K2，防止初始化途中误触发。 */
+static volatile uint8_t g_development_keys_ready;
+
+/*
+ * 配置开发板上的两个物理按键。
+ *
+ * K1 使用内部下拉、按下为高；K2 使用内部上拉、按下为低。
+ * 本函数只配置 GPIO 输入属性，不负责消抖，也不会启动或停止车辆。
+ * 按键消抖和动作解释统一由 RouteControl_OnKeySample() 完成。
+ */
+static void init_development_board_keys(void)
+{
+    DL_GPIO_initDigitalInputFeatures(DEVBOARD_K1_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInputFeatures(DEVBOARD_K2_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
 }
 
-/* ===== 用户周期回调(内核 1kHz 派发, 默认空。只放很短的非阻塞任务) ===== */
-void UserLoop_100Hz(uint32_t now_ms){                   /* 10ms  一次 */
-    (void)now_ms;
-    if(g_periph_demo){
-        BoardKeys_Task100Hz();    /* 按键扫描 + 消抖 */
-        BoardBuzzer_Task1kHz();   /* 蜂鸣器定时关(此处 100Hz 派发, 节拍约略) */
+/*
+ * DCar 框架的 100 Hz 周期回调。
+ *
+ * 每 10 ms 读取一次开发板 K1/K2，并把原始电平送给路线控制器消抖；
+ * 同时调用灰度模块的唯一采样入口。灰度未连接或通信失败时，
+ * GrayReloc_Sample100Hz() 会快速返回，不会阻塞或禁止车辆运动。
+ *
+ * now_ms：DCar 框架提供的系统时刻；本功能按固定回调频率工作，
+ *         当前不直接使用该参数。
+ */
+void UserLoop_100Hz(uint32_t now_ms)
+{
+    uint8_t key1_down = 0U;
+    uint8_t key2_down = 0U;
+
+    (void) now_ms;
+    if (g_development_keys_ready != 0U) {
+        key1_down =
+            (DL_GPIO_readPins(GPIOA, DEVBOARD_K1_PIN) != 0U)
+            ? 1U : 0U;
+        key2_down =
+            (DL_GPIO_readPins(GPIOB, DEVBOARD_K2_PIN) == 0U)
+            ? 1U : 0U;
+        RouteControl_OnKeySample(key1_down, key2_down);
     }
-}
-void UserLoop_50Hz (uint32_t now_ms){ (void)now_ms; }   /* 20ms  一次 */
-void UserLoop_20Hz (uint32_t now_ms){ (void)now_ms; }   /* 50ms  一次 */
-void UserLoop_10Hz (uint32_t now_ms){                   /* 100ms 一次 */
-    (void)now_ms;
-    if(g_periph_demo){
-        /* 按键按下 → 滴一声 + OLED 显示第几个键 */
-        for(uint8_t k=0; k<BOARD_KEYS_COUNT; k++){
-            if(BoardKeys_WasPressed((BoardKey)k)){
-                BoardBuzzer_BeepOk();
-                BoardOled_SetNumber(2, "KEY", (int32_t)(k+1));
-            }
-        }
-        BoardOled_Task10Hz();     /* OLED 限速刷新 */
-    }
+
+    /*
+     * 灰度 I2C 始终由这个唯一的 100 Hz 回调采样。
+     * 模块未接、失效或关闭时函数会立即返回，不影响按键和运动。
+     */
+    GrayReloc_Sample100Hz();
 }
 
+/*
+ * DCar 框架的 50 Hz 预留回调。
+ *
+ * 四段式路线不在这里执行任何工作，保留空实现只是满足框架接口。
+ */
+void UserLoop_50Hz(uint32_t now_ms)
+{
+    (void) now_ms;
+}
+
+/*
+ * DCar 框架的 20 Hz 预留回调。
+ *
+ * 四段式路线不在这里执行任何工作，避免低频任务干扰运动时序。
+ */
+void UserLoop_20Hz(uint32_t now_ms)
+{
+    (void) now_ms;
+}
+
+/*
+ * DCar 框架的 10 Hz 预留回调。
+ *
+ * 四段式路线不在这里执行任何工作；诊断日志只在车辆停车后发送。
+ */
+void UserLoop_10Hz(uint32_t now_ms)
+{
+    (void) now_ms;
+}
+
+/*
+ * 固件主入口。
+ *
+ * 初始化顺序：
+ *   1. 初始化 DCar 运动核心；
+ *   2. 初始化可选串口、开发板按键和可选灰度模块；
+ *   3. 初始化四段式路线控制器；
+ *   4. 最后开放按键采样，并永久进入路线调度循环。
+ *
+ * 串口和灰度属于可选旁路，初始化失败不参与 K1 启动条件。
+ * K1：待机时开始任务，运动时请求急停。
+ * K2：仅允许在首次运动前进入 IMU 校准；校准完成后需按 Reset。
+ */
 int main(void)
 {
-    Dcar_System_Init();          /* ① 启动全部内核(必须第一句; 之后底层在中断里自动跑) */
-    Dcar_PrintActivationStatus();/* UART0@115200: ACTIVATED / NOT ACTIVATED */
+    Dcar_System_Init();
 
-    /* 可选: 用返回值决定未激活时是否停止后续流程。1=已激活, 0=未激活/验签失败。
-     *   if(!Dcar_IsActivated()){
-     *       for(;;){ Dcar_Service(); }   // 不执行后续运动流程
-     *   }
+    /*
+     * UART 和灰度都是可选旁路。初始化结果不参与运动启动条件；
+     * 拔掉无线串口或灰度模块时，K1 仍可直接启动基础四段路线。
      */
+    BoardUart_InitTxOnly();
+    init_development_board_keys();
+    GrayReloc_Init();
+    RouteControl_Init();
 
-    /* ===== 陀螺零偏校准(空板首次烧录后做一次) =====================================
-     * 全新芯片 flash 没存过零偏, 开机自动采样那一秒如果车没放稳, 会采到错零偏 →
-     * 表现为"原地自转 / 不锁头"。解决: 把车放平、静止, 取消下面这行注释, 烧一次跑一遍
-     * (约4秒, 期间车自动停住采样), 真零偏存进 flash; 之后开机自动读, 把这行再注释回去即可。 */
-    // Dcar_GyroCalibrate();
+    g_development_keys_ready = 1U;
+    RouteControl_RunForever();
 
-
-    /* ===== 外设上电: 蜂鸣器 / OLED / 按键 初始化 + 开机提示 ===== */
-    if(g_periph_demo){
-        BoardBuzzer_Init();
-        BoardKeys_Init();
-        BoardOled_Init();
-        BoardOled_SetLine(0, "DCAR G3507");
-        BoardOled_SetLine(1, "Peripherals OK");
-        BoardBuzzer_On(); Dcar_Delay(120U); BoardBuzzer_Off();  /* 开机滴一声 */
-    }
-
-    if(g_run_demo){              /* ② 上电演示(把 g_run_demo 改 0 可关掉) */
-        run_demo_sequence();
-    }
-
-    /* ③ 你的比赛流程写这里。Move/Arc 自带阻塞(走完才返回), 直接一条接一条:
-     *
-     *   DcarStatus result = Dcar_Move(0.5f, 0.0f, 0.0f, 0.3f); // 前进 0.5m
-     *   // result==DCAR_STATUS_OK 正常完成; -1 未激活; -4 IMU异常; -5 编码器无动作
-     *   Dcar_Move(0,    0,    1.5708f, 2.0f);// 原地左转 90°
-     *   Dcar_Arc (0.20f, 1.5708f, 0.15f);    // 半径0.2m 走 90° 弧
-     *   Dcar_Delay(500);                     // 停顿 0.5s
-     *
-     * 流式遥控(非阻塞)就持续发 Dcar_Drive + 短 Dcar_Delay:
-     *   for(int i=0;i<300;i++){ Dcar_Drive(0.2f, 0.0f); Dcar_Delay(5); } // 直行1.5s
-     *
-     * 读里程计: float x,y,yaw; Dcar_GetOdom(&x,&y,&yaw);
-     */
-
-    /* ④ 主循环: 必须周期调 Dcar_Service()(让后台 calib 落盘 + 串口遥测照常跑)。
-     *    不要在这写永远出不来的裸 while(1) 而不调 Service。 */
-    for(;;){
+    for (;;) {
         Dcar_Service();
-        /* 这里也可以放非阻塞应用逻辑, 例如按条件急停:
-         *   // if(some_condition){ Dcar_Stop(); } */
     }
 }

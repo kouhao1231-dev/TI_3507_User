@@ -1,81 +1,160 @@
-# DCAR G3507 用户版 SDK
+# 2024 年全国大学生电子设计竞赛 H 题第四问：四段式高速运动例程
 
-小车底层(电机/编码器/IMU/里程计/锁头串级/速度PID/节点锁)已封装成**闭源内核库**,
-你只写应用代码,通过 `User/dcar_api.h` 的公开函数控制小车。**同一份代码 Mac 和 Windows 都能编。**
+本例程面向固定赛道上的二轮小车高速绕图任务。完整任务由四圈组成，每圈包含一个左周期和一个右周期：
 
-当前发布版本：**TICore v1.5**（2026-07-15）。本版将电机1编码器迁移为
-`ENA/A相 = PB2`、`ENB/B相 = PB3`；电机2编码器保持 `PA22/PA23`。
-
-## 目录
-```
-User/                    ← 你改这里
-  user_main.c            ← 主程序(写你的比赛流程)
-  dcar_api.h             ← 用户 API 接口
-  DCAR_G3507_用户API说明.md ← 用户手册(必看)
-  ti_msp_dl_config.c/.h  ← 板级配置(引脚)
-lib/
-  libdcar_core.a         ← 内核闭源库 (GCC/Mac 用)
-  libdcar_core_keil.lib  ← 内核闭源库 (Keil/Windows 用)
-Source/                  ← TI 官方驱动 + 器件头 + 启动/链接脚本
-build_user.sh            ← Mac/Linux 一键编译
-build_user.bat           ← Windows/Keil 一键编译
-DCAR_G3507_User.uvprojx  ← Keil 图形工程(双击打开)
-打开Keil工程.bat          ← Windows 下双击打开 Keil 工程
+```text
+L1 → R1 → L2 → R2 → L3 → R3 → L4 → R4 → 停车
 ```
 
-## 编译
+每个周期均由四段连续运动构成：
 
-**Mac / Linux(GCC)**
+```text
+已标定大半圆 → 第一小转角 → 恒速斜线直行 → 第二小转角回正
+```
+
+例程以 DCar 运动内核为基础，保留大半圆运动的高一致性，并将小转角、直线和回正分别建模、分别标定。默认参数已经配置为连续四圈运行。
+
+## 核心特点
+
+- 大半圆直接使用 DCar 的 `Dcar_Arc()` 运动原语，保持圆弧半径、角度和速度的一致性。
+- 两个小转角采用 8 ms 流式速度指令，以最大转向量快速转向，到达目标相对航向后立即释放，不反向追角。
+- 直线段采用“标定速度 × 控制周期 × 指令次数”的距离模型，速度连续，没有传统移动指令在段间的明显加减速割裂。
+- 左右周期完全独立标定：左、右各有第一小转角、直线距离、第二小转角三个参数，互不混用。
+- 每个周期均在大半圆出口建立局部参考系；转向只读取这一小段内的相对航向，不使用长时间累积的全局位置闭环。
+- 灰度模块默认只记录圆弧端点，不改变基础运动；需要提高起点摆放和机械差异的适应性时，可单独开启灰度修正。
+- 串口日志和灰度 I2C 属于运动旁路。串口未接、发送失败或灰度模块失效时，基础四段运动仍可由 K1 正常启动。
+- 日志在全部运动停车后统一发送，避免长串口输出干扰高速运动时序。
+
+## 为什么要这样使用里程计
+
+DCar 里程计的测量精度和短时重复性很高。车辆偏离理想路线时，里程计通常是在准确记录车辆的真实运动，而不是产生随机误差。
+
+二轮车的长期偏移主要来自机械执行端：左右有效轮径差、轮子不平行、轮距误差、轮胎接触状态和车架装配偏差。这些因素会让车辆真实地多走、少走或产生额外偏航；里程计能够把这种真实偏离测出来。
+
+本例程充分利用这一特点：
+
+1. 大半圆结束时保存当前里程计位姿作为局部原点。
+2. 第一小转角和第二小转角只使用从该局部原点开始的相对航向角。
+3. 相对航向在短时间内具有很高的重复性，适合用于“打满转向—到点释放”的高速闭环。
+4. 直线段不追逐世界坐标 X/Y，而使用经过实车标定的固定速度模型完成独立距离控制。
+5. 下一个大半圆再次建立新的局部原点，使机械安装误差不会以全局坐标的形式长期污染每一段小转角控制。
+
+这套方法不是否定里程计，而是把 DCar 里程计最可信的短时相对航向能力用在最适合的位置，同时把二轮车机械特性通过分段参数进行清晰、稳定的标定。
+
+## 快速开始
+
+### 1. 编译
+
+macOS / Linux：
+
 ```bash
-./build_user.sh        # 产物 firmware.hex
-# 工具链不在 PATH 时:  ARM_GCC=/路径/arm-none-eabi-gcc ./build_user.sh
+./build_user.sh
 ```
 
-**Windows(Keil)**
-- 命令行:`build_user.bat`(需要 Keil MDK / ARMClang)
-- 或图形界面:双击 `DCAR_G3507_User.uvprojx`，再点编译
+Windows：
 
-两边编出来的 `firmware.hex` 功能完全一样。
+- 双击 `DCAR_G3507_User.uvprojx` 打开 Keil 工程后编译；或
+- 运行 `build_user.bat`。
 
-## 下载与激活顺序
+编译产物为 `firmware.hex`。
 
-1. 先编译并下载用户程序。
-2. 最后在 DFhelper 中执行“TI版本下载&激活”。
-3. DFhelper 只有在订单授权、License 写入、复位后保存、内核运行时验签四项都通过时，才会显示可正常运行。
+### 2. 烧录与激活
 
-License 位于 `0x1F000`，IMU 标定位于 `0x1F800/0x1FC00`。Keil 下载时必须选择
-`Erase Sectors`，不要选择 `Erase Full Chip`。如果激活后又执行了全片擦除，请重新激活。
+将 `firmware.hex` 下载至小车。设备使用节点锁时，按配套工具完成“TI 版本下载与激活”。Keil 下载应选择 `Erase Sectors`，不要选择全片擦除，以保留设备激活信息和 IMU 校准数据。
 
-用户程序也可以调用 `Dcar_IsActivated()`：返回 `1` 表示当前芯片的 License 已通过
-内核运行时验签，返回 `0` 表示未激活、License 丢失或 License 不属于当前芯片。
-例程会在 `Dcar_System_Init()` 后调用 `Dcar_PrintActivationStatus()`，从 UART0@115200
-直接输出 `[DCAR] Activation: ACTIVATED` 或 `[DCAR] Activation: NOT ACTIVATED`。
+### 3. 上电与按键
 
-`Dcar_Move()`、`Dcar_Arc()` 和 `Dcar_Drive()` 都返回 `DcarStatus`。例如前进 10cm
-却未执行时，`DCAR_STATUS_NOT_ACTIVATED` 表示 License 未通过运行时验签，
-`DCAR_STATUS_IMU_ERROR` 表示 IMU 未响应，`DCAR_STATUS_STALLED` 表示编码器持续无动作；
-完整状态表见 `User/DCAR_G3507_用户API说明.md`。
+- K1：开发板 PA18。停车时按下启动任务；运动过程中再次按下立即中止。
+- K2：开发板 PB21。仅在首次运动前按下，可进入 IMU 零偏校准。校准完成后按 Reset 重新启动。
 
-## 用法
-看 `User/DCAR_G3507_用户API说明.md`。最常用:
+IMU 校准时，小车应水平、静止地放在稳定台面上。
+
+## 运行方式
+
+所有参数位于：
+
+```text
+User/Inc/route_config.h
+```
+
+运行方式由以下宏控制：
+
 ```c
-Dcar_Move(0.5f, 0, 0, 0.3f);   // 前进 0.5m
-Dcar_Move(0, 0, 1.5708f, 2.0f);// 原地左转 90°
-Dcar_Arc(0.20f, 1.5708f, 0.15f);// 半径0.2m 走 90° 弧
+#define ROUTE_CONTINUOUS_RUN 1U
 ```
-改 `User/user_main.c` 里的 `g_run_demo` 为 0 可关掉上电演示。
 
-> ⚠ `User/user_main.c` 顶部列了内核已占用的资源(定时器/SPI/UART/引脚/中断优先级/Flash扇区),
-> 你加自己的外设时避开它们。
+- `0U`：每按一次 K1 只执行一个左/右周期，适合逐段观察和标定。
+- `1U`：每按一次 K1 连续执行四圈，完整任务结束后停车。
 
-## 首次使用:陀螺零偏校准
+连续模式只改变一次触发所执行的周期数，不改变四段控制算法和标定参数。
 
-车**放平静止**,在 `User/user_main.c` 里调用一次 `Dcar_GyroCalibrate()`(校准值存芯片 flash,之后开机自动读取)。**不校准可能出现航向漂移或原地自转。** 校准完可把这行注释掉。
+## 参数标定
 
-## ⚠️ 设备激活(节点锁防克隆)
+`User/Inc/route_config.h` 是唯一调参入口。推荐按以下顺序标定：
 
-本固件带**节点锁**:编出的固件需要芯片**已激活**才能正常运行。请用配套上位机 **DFhelper →「TI 版本下载&激活」** 提交芯片指纹完成激活授权。未激活的芯片烧录后运动控制不会启动。
+1. 确认大半圆稳定后再调整其半径和角度参数。
+2. 调整第一小转角，使出弯后的斜线方向正确。
+3. 调整直线目标距离，使终点前后距离正确。
+4. 调整第二小转角，使车头回正并对齐下一段圆弧入口。
+5. 先在单周期模式重复验证左、右周期，再切换到连续四圈模式。
 
----
+左右周期的三个核心参数如下：
 
-如需技术支持或设备激活,请联系供货方。
+| 周期 | 第一小转角：决定斜线倾斜 | 直线：决定前进距离 | 第二小转角：决定最终回正 |
+|---|---|---|---|
+| 左周期 | `ROUTE_LEFT_TURN_IN_RELEASE_YAW_RAD` | `ROUTE_LEFT_STRAIGHT_DISTANCE_M` | `ROUTE_LEFT_TURN_OUT_RELEASE_YAW_RAD` |
+| 右周期 | `ROUTE_RIGHT_TURN_IN_RELEASE_YAW_RAD` | `ROUTE_RIGHT_STRAIGHT_DISTANCE_M` | `ROUTE_RIGHT_TURN_OUT_RELEASE_YAW_RAD` |
+
+参数之间保持解耦：第一小转角只改变斜线方向，直线参数只改变本段长度，第二小转角只改变最终回正方向。
+
+## 灰度端点修正
+
+八路灰度模块在圆弧期间持续采样，记录离开黑线时最后一个有效掩码。默认配置为只记录、不介入运动：
+
+```c
+#define ROUTE_GRAY_CAPTURE_ENABLE    1U
+#define ROUTE_GRAY_CORRECTION_ENABLE 0U
+```
+
+将 `ROUTE_GRAY_CORRECTION_ENABLE` 改为 `1U` 后，端点横向观测会修正下一段的第一小转角和直线距离；第二小转角仍保持独立。灰度模块未连接或通信失败时，只关闭灰度旁路，不影响基础四段路线。
+
+## 代码结构
+
+```text
+User/user_main.c                 硬件初始化、K1/K2 和周期回调
+User/Inc/route_config.h          唯一参数入口
+User/Src/route_control.c         四段运动执行与左右周期调度
+User/Src/route_logic.c           局部航向、计划生成和单向释放逻辑
+User/Src/gray_relocalization.c   灰度端点观测
+User/Src/route_log.c             停车后压缩日志
+```
+
+代码中的宏和函数均包含中文注释。`user_main.c` 顶部列出了最常用参数及其准确位置。
+
+## 日志与验证
+
+完整运动结束后，串口会输出以 `DC,` 开头的压缩周期日志。日志格式见：
+
+- [日志格式说明](docs/ROUTE_LOG_FORMAT.md)
+- [四段式路线控制教程](docs/FOUR_SEGMENT_ROUTE_CONTROL_TUTORIAL.md)
+
+主机回归测试：
+
+```bash
+./tools/test_velpos_static.sh
+```
+
+测试覆盖四段顺序、左右计划、相对航向释放、直线距离模型、灰度故障隔离、日志编码和 Keil 工程文件。
+
+## DCar SDK 目录
+
+```text
+User/                    用户应用代码和接口
+lib/                     DCar 运动内核库
+Source/                  TI MSPM0 驱动与启动文件
+DCAR_G3507_User.uvprojx  Keil 图形工程
+build_user.sh            macOS / Linux 编译脚本
+build_user.bat           Windows / Keil 编译脚本
+```
+
+`User/dcar_api.h` 提供 `Dcar_Arc()`、`Dcar_Drive()`、`Dcar_Stop()`、`Dcar_GetOdom()` 和 `Dcar_GyroCalibrate()` 等公开接口；完整接口说明位于 `User/DCAR_G3507_用户API说明.md`。

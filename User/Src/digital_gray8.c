@@ -16,7 +16,12 @@
 #define DIGITAL_GRAY8_SPARE1_PIN    DL_GPIO_PIN_25
 #define DIGITAL_GRAY8_SPARE1_IOMUX  IOMUX_PINCM56
 
-#define DIGITAL_GRAY8_I2C_DELAY_LOOPS 120U
+/*
+ * MCLK is 32 MHz.  Sixteen volatile-loop iterations plus the GPIO helper
+ * overhead keep the software bus near standard-mode I2C timing while making
+ * one cached 100 Hz read short enough for the low-priority user callback.
+ */
+#define DIGITAL_GRAY8_I2C_DELAY_LOOPS 16U
 
 volatile DigitalGray8_State g_digital_gray8;
 
@@ -40,6 +45,7 @@ static void digital_gray8_delay(void)
 
 static void sda_release(void)
 {
+    DL_GPIO_disableOutput(DIGITAL_GRAY8_SDA_PORT, DIGITAL_GRAY8_SDA_PIN);
     DL_GPIO_initDigitalInputFeatures(DIGITAL_GRAY8_SDA_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
@@ -48,6 +54,7 @@ static void sda_release(void)
 
 static void scl_release(void)
 {
+    DL_GPIO_disableOutput(DIGITAL_GRAY8_SCL_PORT, DIGITAL_GRAY8_SCL_PIN);
     DL_GPIO_initDigitalInputFeatures(DIGITAL_GRAY8_SCL_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);

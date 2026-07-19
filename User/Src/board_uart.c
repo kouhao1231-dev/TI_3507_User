@@ -2,19 +2,20 @@
 
 #include "ti_msp_dl_config.h"
 
-#define BOARD_UART_INST        UART2
+#define BOARD_UART_INST        UART1
 #define BOARD_UART_BAUD        115200U
 #define BOARD_UART_CLK_FREQ    CPUCLK_FREQ
-#define BOARD_UART_TX_IOMUX    IOMUX_PINCM43
-#define BOARD_UART_TX_PF       IOMUX_PINCM43_PF_UART2_TX
-#define BOARD_UART_RX_IOMUX    IOMUX_PINCM44
-#define BOARD_UART_RX_PF       IOMUX_PINCM44_PF_UART2_RX
+#define BOARD_UART_TX_IOMUX    IOMUX_PINCM17
+#define BOARD_UART_TX_PF       IOMUX_PINCM17_PF_UART1_TX
+#define BOARD_UART_RX_IOMUX    IOMUX_PINCM18
+#define BOARD_UART_RX_PF       IOMUX_PINCM18_PF_UART1_RX
 #define BOARD_UART_RX_BUF_SIZE 64U
 #define BOARD_UART_LINE_SIZE   32U
 #define BOARD_UART_LINE_QUEUE  4U
-#define BOARD_UART_TX_WAIT     200000U
+#define BOARD_UART_TX_WAIT     8192U
 
 static volatile BoardUartStatus g_uart_status = BOARD_UART_NOT_CONFIGURED;
+static volatile uint8_t g_uart_rx_enabled;
 static volatile uint32_t g_uart_tx_count;
 static volatile uint32_t g_uart_rx_count;
 static volatile uint8_t g_uart_last_rx;
@@ -137,6 +138,9 @@ static void uart_store_line_byte(uint8_t byte)
 
 static void uart_poll_rx(void)
 {
+    if (g_uart_rx_enabled == 0U) {
+        return;
+    }
     while (!DL_UART_isRXFIFOEmpty(BOARD_UART_INST)) {
         uint8_t byte = DL_UART_receiveData(BOARD_UART_INST);
         g_uart_last_rx = byte;
@@ -150,13 +154,13 @@ static uint8_t uart_wait_tx_ready(void)
 {
     uint32_t wait = BOARD_UART_TX_WAIT;
 
-    while ((DL_UART_isTXFIFOFull(BOARD_UART_INST) || DL_UART_isBusy(BOARD_UART_INST)) && (wait > 0U)) {
+    while (DL_UART_isTXFIFOFull(BOARD_UART_INST) && (wait > 0U)) {
         wait--;
     }
     return (wait > 0U) ? 1U : 0U;
 }
 
-void BoardUart_Init(void)
+static void board_uart_init(uint8_t rx_enabled)
 {
     const DL_UART_ClockConfig clock_config = {
         .clockSel = DL_UART_CLOCK_BUSCLK,
@@ -164,15 +168,28 @@ void BoardUart_Init(void)
     };
     const DL_UART_Config uart_config = {
         .mode = DL_UART_MODE_NORMAL,
-        .direction = DL_UART_DIRECTION_TX_RX,
+        .direction = (rx_enabled != 0U)
+            ? DL_UART_DIRECTION_TX_RX : DL_UART_DIRECTION_TX,
         .flowControl = DL_UART_FLOW_CONTROL_NONE,
         .parity = DL_UART_PARITY_NONE,
         .wordLength = DL_UART_WORD_LENGTH_8_BITS,
         .stopBits = DL_UART_STOP_BITS_ONE,
     };
 
-    DL_GPIO_initPeripheralOutputFunction(BOARD_UART_TX_IOMUX, BOARD_UART_TX_PF);
-    DL_GPIO_initPeripheralInputFunction(BOARD_UART_RX_IOMUX, BOARD_UART_RX_PF);
+    NVIC_DisableIRQ(UART1_INT_IRQn);
+    NVIC_ClearPendingIRQ(UART1_INT_IRQn);
+    DL_GPIO_initPeripheralOutputFunction(
+        BOARD_UART_TX_IOMUX, BOARD_UART_TX_PF);
+    if (rx_enabled != 0U) {
+        DL_GPIO_initPeripheralInputFunctionFeatures(
+            BOARD_UART_RX_IOMUX, BOARD_UART_RX_PF,
+            DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+            DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
+    } else {
+        DL_GPIO_initDigitalInputFeatures(BOARD_UART_RX_IOMUX,
+            DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+            DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
+    }
 
     DL_UART_reset(BOARD_UART_INST);
     DL_UART_enablePower(BOARD_UART_INST);
@@ -182,15 +199,21 @@ void BoardUart_Init(void)
     DL_UART_setOversampling(BOARD_UART_INST, DL_UART_OVERSAMPLING_RATE_16X);
     DL_UART_configBaudRate(BOARD_UART_INST, BOARD_UART_CLK_FREQ, BOARD_UART_BAUD);
     DL_UART_enableFIFOs(BOARD_UART_INST);
-    DL_UART_setRXFIFOThreshold(BOARD_UART_INST, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
-    DL_UART_setRXInterruptTimeout(BOARD_UART_INST, 1U);
-    DL_UART_enableInterrupt(BOARD_UART_INST,
-        DL_UART_INTERRUPT_RX | DL_UART_INTERRUPT_RX_TIMEOUT_ERROR |
-        DL_UART_INTERRUPT_OVERRUN_ERROR | DL_UART_INTERRUPT_FRAMING_ERROR);
+    if (rx_enabled != 0U) {
+        DL_UART_setRXFIFOThreshold(
+            BOARD_UART_INST, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
+        DL_UART_setRXInterruptTimeout(BOARD_UART_INST, 1U);
+        DL_UART_enableInterrupt(BOARD_UART_INST,
+            DL_UART_INTERRUPT_RX | DL_UART_INTERRUPT_RX_TIMEOUT_ERROR |
+            DL_UART_INTERRUPT_OVERRUN_ERROR |
+            DL_UART_INTERRUPT_FRAMING_ERROR);
+    } else {
+        DL_UART_disableInterrupt(BOARD_UART_INST,
+            DL_UART_INTERRUPT_RX | DL_UART_INTERRUPT_RX_TIMEOUT_ERROR |
+            DL_UART_INTERRUPT_OVERRUN_ERROR |
+            DL_UART_INTERRUPT_FRAMING_ERROR);
+    }
     DL_UART_enable(BOARD_UART_INST);
-    NVIC_SetPriority(UART2_INT_IRQn, 2U);
-    NVIC_ClearPendingIRQ(UART2_INT_IRQn);
-    NVIC_EnableIRQ(UART2_INT_IRQn);
 
     g_uart_tx_count = 0U;
     g_uart_rx_count = 0U;
@@ -205,7 +228,24 @@ void BoardUart_Init(void)
     g_uart_line_overflow_count = 0U;
     g_uart_line_buf[0] = '\0';
     g_uart_last_line[0] = '\0';
+    g_uart_rx_enabled = rx_enabled;
     g_uart_status = BOARD_UART_READY;
+
+    if (rx_enabled != 0U) {
+        NVIC_SetPriority(UART1_INT_IRQn, 2U);
+        NVIC_ClearPendingIRQ(UART1_INT_IRQn);
+        NVIC_EnableIRQ(UART1_INT_IRQn);
+    }
+}
+
+void BoardUart_Init(void)
+{
+    board_uart_init(1U);
+}
+
+void BoardUart_InitTxOnly(void)
+{
+    board_uart_init(0U);
 }
 
 void BoardUart_Task(void)
@@ -368,7 +408,7 @@ uint8_t BoardUart_GetLastRx(void)
     return g_uart_last_rx;
 }
 
-void UART2_IRQHandler(void)
+void UART1_IRQHandler(void)
 {
     g_uart_irq_count++;
     uart_poll_rx();

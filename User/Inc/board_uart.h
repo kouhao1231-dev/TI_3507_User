@@ -13,6 +13,7 @@ typedef enum {
 } BoardUartStatus;
 
 void BoardUart_Init(void);
+void BoardUart_InitTxOnly(void);
 void BoardUart_Task(void);
 BoardUartStatus BoardUart_GetStatus(void);
 uint8_t BoardUart_WriteByte(uint8_t byte);
