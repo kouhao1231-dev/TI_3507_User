@@ -215,6 +215,7 @@ static void expect_route_success(ContestRouteMode mode, const char *name)
     ContestRouteTelemetry telemetry;
     ContestRouteRunResult result;
     float stop_threshold_m;
+    float expected_arc_radius_m;
 
     fake_reset(mode);
     result = (mode == CONTEST_ROUTE_H) ? ContestRouteControl_RunH() :
@@ -222,15 +223,15 @@ static void expect_route_success(ContestRouteMode mode, const char *name)
     (void) ContestRoute_GetSpec(mode, &spec);
     ContestRouteControl_GetTelemetry(&telemetry);
     stop_threshold_m = ContestRoute_TotalLength(&spec) - spec.stop_lead_m;
+    expected_arc_radius_m = (mode == CONTEST_ROUTE_H) ?
+        CONTEST_H_ARC_COMMAND_RADIUS_M : CONTEST_D_ARC_COMMAND_RADIUS_M;
 
     expect_true(name, result == CONTEST_ROUTE_RUN_COMPLETE);
     expect_true("exactly two blocking arc commands", g_fake.arc_calls == 2U);
     expect_close("first arc uses calibrated command radius",
-        g_fake.first_arc_radius_m,
-        spec.radius_m / CONTEST_2024_ARC_RADIUS_SCALE);
+        g_fake.first_arc_radius_m, expected_arc_radius_m);
     expect_close("second arc uses calibrated command radius",
-        g_fake.second_arc_radius_m,
-        spec.radius_m / CONTEST_2024_ARC_RADIUS_SCALE);
+        g_fake.second_arc_radius_m, expected_arc_radius_m);
     expect_close("first arc is one clockwise calibrated half-circle",
         g_fake.first_arc_yaw_rad, -spec.half_arc_yaw_rad);
     expect_close("second arc is one clockwise calibrated half-circle",

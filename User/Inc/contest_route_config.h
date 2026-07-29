@@ -36,12 +36,12 @@
  * 圆弧转角调大：转得更多；调小：转得更少。这里只填正数，
  * 程序调用 Dcar_Arc() 时会自动加负号，保持顺时针方向。
  */
-#define CONTEST_H_TURN_TRIGGER_RAW_ODOM_M 0.68f
-#define CONTEST_H_ARC_COMMAND_RADIUS_M    0.2252f
-#define CONTEST_H_ARC_YAW_RAD             3.12f
-#define CONTEST_D_TURN_TRIGGER_RAW_ODOM_M 0.2f
-#define CONTEST_D_ARC_COMMAND_RADIUS_M    0.3378f
-#define CONTEST_D_ARC_YAW_RAD             3.12f
+#define CONTEST_H_TURN_TRIGGER_RAW_ODOM_M 0.72f
+#define CONTEST_H_ARC_COMMAND_RADIUS_M    0.23f
+#define CONTEST_H_ARC_YAW_RAD             3.195f
+#define CONTEST_D_TURN_TRIGGER_RAW_ODOM_M 0.74f
+#define CONTEST_D_ARC_COMMAND_RADIUS_M    0.35f
+#define CONTEST_D_ARC_YAW_RAD             3.22f
 
 /* H 题：AB/CD=1.50m，BC/DA 半径=0.50m。 */
 #define CONTEST_H_STRAIGHT_M            1.50f

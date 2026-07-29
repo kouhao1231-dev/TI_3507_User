@@ -5,7 +5,6 @@
 #include <stdio.h>
 
 #define TEST_PI 3.14159265358979323846f
-#define TEST_2024_HALF_ARC_YAW 3.12f
 #define TEST_2024_DISTANCE_SCALE 2.02f
 #define TEST_2024_HEIGHT_SCALE 2.06f
 #define TEST_2024_ARC_SCALE 2.22f
@@ -58,8 +57,6 @@ static void test_specs_and_total_lengths(void)
     expect_close("H reuses 2024 forward-distance calibration",
         h.forward_distance_scale,
         TEST_2024_DISTANCE_SCALE);
-    expect_close("H reuses 2024 half-arc yaw", h.half_arc_yaw_rad,
-        TEST_2024_HALF_ARC_YAW);
     expect_close("H exposes an independent adjustable arc yaw",
         h.half_arc_yaw_rad, CONTEST_H_ARC_YAW_RAD);
     expect_close("H stop lead", h.stop_lead_m, 0.015f);
@@ -70,8 +67,6 @@ static void test_specs_and_total_lengths(void)
     expect_close("D reuses 2024 forward-distance calibration",
         d.forward_distance_scale,
         TEST_2024_DISTANCE_SCALE);
-    expect_close("D reuses 2024 half-arc yaw", d.half_arc_yaw_rad,
-        TEST_2024_HALF_ARC_YAW);
     expect_close("D exposes an independent adjustable arc yaw",
         d.half_arc_yaw_rad, CONTEST_D_ARC_YAW_RAD);
     expect_close("2024 lateral log calibration keeps original meaning",
@@ -103,36 +98,36 @@ static void test_route_boundaries(void)
         { "H before B", CONTEST_ROUTE_H, 1.499f, CONTEST_SEGMENT_AB, 0.0f,
             0.0f, 1.501f + TEST_PI },
         { "H B", CONTEST_ROUTE_H, 1.50f, CONTEST_SEGMENT_BC, 0.0f,
-            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
+            -(CONTEST_H_ARC_YAW_RAD / (0.50f * TEST_PI)),
             1.5f + TEST_PI },
         { "H BC midpoint", CONTEST_ROUTE_H,
             1.50f + (0.25f * TEST_PI), CONTEST_SEGMENT_BC,
-            -0.5f * TEST_2024_HALF_ARC_YAW,
-            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
+            -0.5f * CONTEST_H_ARC_YAW_RAD,
+            -(CONTEST_H_ARC_YAW_RAD / (0.50f * TEST_PI)),
             1.5f + (0.75f * TEST_PI) },
         { "H C", CONTEST_ROUTE_H, 1.50f + (0.50f * TEST_PI),
-            CONTEST_SEGMENT_CD, -TEST_2024_HALF_ARC_YAW, 0.0f,
+            CONTEST_SEGMENT_CD, -CONTEST_H_ARC_YAW_RAD, 0.0f,
             1.50f + (0.50f * TEST_PI) },
         { "H D", CONTEST_ROUTE_H, 3.0f + (0.50f * TEST_PI),
-            CONTEST_SEGMENT_DA, -TEST_2024_HALF_ARC_YAW,
-            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
+            CONTEST_SEGMENT_DA, -CONTEST_H_ARC_YAW_RAD,
+            -(CONTEST_H_ARC_YAW_RAD / (0.50f * TEST_PI)),
             0.50f * TEST_PI },
         { "H DA midpoint", CONTEST_ROUTE_H,
             3.0f + (0.75f * TEST_PI), CONTEST_SEGMENT_DA,
-            -1.5f * TEST_2024_HALF_ARC_YAW,
-            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
+            -1.5f * CONTEST_H_ARC_YAW_RAD,
+            -(CONTEST_H_ARC_YAW_RAD / (0.50f * TEST_PI)),
             0.25f * TEST_PI },
         { "H completed", CONTEST_ROUTE_H, 3.0f + TEST_PI,
             CONTEST_SEGMENT_DONE, 0.0f, 0.0f, 0.0f },
         { "D B", CONTEST_ROUTE_D, 1.50f, CONTEST_SEGMENT_BC, 0.0f,
-            -(TEST_2024_HALF_ARC_YAW / (0.75f * TEST_PI)),
+            -(CONTEST_D_ARC_YAW_RAD / (0.75f * TEST_PI)),
             1.5f + (1.5f * TEST_PI) },
         { "D C", CONTEST_ROUTE_D, 1.50f + (0.75f * TEST_PI),
-            CONTEST_SEGMENT_CD, -TEST_2024_HALF_ARC_YAW, 0.0f,
+            CONTEST_SEGMENT_CD, -CONTEST_D_ARC_YAW_RAD, 0.0f,
             1.5f + (0.75f * TEST_PI) },
         { "D D", CONTEST_ROUTE_D, 3.0f + (0.75f * TEST_PI),
-            CONTEST_SEGMENT_DA, -TEST_2024_HALF_ARC_YAW,
-            -(TEST_2024_HALF_ARC_YAW / (0.75f * TEST_PI)),
+            CONTEST_SEGMENT_DA, -CONTEST_D_ARC_YAW_RAD,
+            -(CONTEST_D_ARC_YAW_RAD / (0.75f * TEST_PI)),
             0.75f * TEST_PI },
         { "D completed", CONTEST_ROUTE_D, 3.0f + (1.5f * TEST_PI),
             CONTEST_SEGMENT_DONE, 0.0f, 0.0f, 0.0f }
