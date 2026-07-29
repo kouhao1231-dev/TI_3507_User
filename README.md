@@ -65,6 +65,13 @@ Dcar_Arc(0.20f, 1.5708f, 0.15f);// 半径0.2m 走 90° 弧
 ```
 改 `User/user_main.c` 里的 `g_run_demo` 为 0 可关掉上电演示。
 
+## 2026 H/D 固定路线入口
+
+烧录并激活后，板载按键 `K1` 启动 H 路线、`K2` 启动 D 路线、`K5` 随时急停；OLED 会显示
+路线、AB/BC/CD/DA 段和运行时间。完整几何、参数标定、烧录和风险说明见
+[`docs/2026_H_D_FIXED_ROUTE_GUIDE.md`](docs/2026_H_D_FIXED_ROUTE_GUIDE.md)。该功能只使用里程计与 IMU，
+不依赖光电或灰度模块。
+
 > ⚠ `User/user_main.c` 顶部列了内核已占用的资源(定时器/SPI/UART/引脚/中断优先级/Flash扇区),
 > 你加自己的外设时避开它们。
 

@@ -442,6 +442,16 @@
               <FilePath>.\User\Src\yabo_gray8_uart.c</FilePath>
             </File>
             <File>
+              <FileName>contest_route_logic.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\User\Src\contest_route_logic.c</FilePath>
+            </File>
+            <File>
+              <FileName>contest_route_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\User\Src\contest_route_control.c</FilePath>
+            </File>
+            <File>
               <FileName>board_buzzer.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\User\Inc\board_buzzer.h</FilePath>
@@ -480,6 +490,21 @@
               <FileName>yabo_gray8_uart.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\User\Inc\yabo_gray8_uart.h</FilePath>
+            </File>
+            <File>
+              <FileName>contest_route_logic.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\contest_route_logic.h</FilePath>
+            </File>
+            <File>
+              <FileName>contest_route_control.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\contest_route_control.h</FilePath>
+            </File>
+            <File>
+              <FileName>contest_route_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\User\Inc\contest_route_config.h</FilePath>
             </File>
           </Files>
         </Group>
