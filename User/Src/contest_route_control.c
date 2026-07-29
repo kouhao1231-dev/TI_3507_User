@@ -181,12 +181,6 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
             result = CONTEST_ROUTE_RUN_ABORTED;
             break;
         }
-        if (elapsed_ms >= spec.timeout_ms) {
-            result = CONTEST_ROUTE_RUN_TIMEOUT;
-            Dcar_Stop();
-            break;
-        }
-
         Dcar_GetOdom(&x, &y, &yaw);
         if ((isfinite(x) == 0) || (isfinite(y) == 0) ||
             (isfinite(yaw) == 0)) {
@@ -212,6 +206,18 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
             elapsed_ms, 1U, status, CONTEST_ROUTE_RUN_IDLE);
         if (distance_m >= stop_threshold_m) {
             result = CONTEST_ROUTE_RUN_COMPLETE;
+            Dcar_Stop();
+            break;
+        }
+        if ((mode == CONTEST_ROUTE_D) &&
+            (elapsed_ms >= CONTEST_D_B_DEADLINE_MS) &&
+            (reference.segment == CONTEST_SEGMENT_AB)) {
+            result = CONTEST_ROUTE_RUN_TIMEOUT;
+            Dcar_Stop();
+            break;
+        }
+        if (elapsed_ms >= spec.timeout_ms) {
+            result = CONTEST_ROUTE_RUN_TIMEOUT;
             Dcar_Stop();
             break;
         }

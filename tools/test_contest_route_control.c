@@ -17,6 +17,12 @@ typedef struct {
     unsigned int fail_drive_call;
     unsigned int abort_delay_call;
     unsigned int invalid_yaw_delay_call;
+    unsigned int step_change_delay_call;
+    unsigned int second_step_change_delay_call;
+    unsigned int force_x_delay_call;
+    float step_after_change_m;
+    float step_after_second_change_m;
+    float forced_x_m;
     float stop_distance_m;
     int saw_abort_stop;
     int saw_segment_bc;
@@ -109,6 +115,15 @@ void Dcar_Delay(uint32_t ms)
         ms == CONTEST_CONTROL_PERIOD_MS);
     g_fake.delay_calls++;
     g_fake.x += g_fake.step_m;
+    if (g_fake.delay_calls == g_fake.step_change_delay_call) {
+        g_fake.step_m = g_fake.step_after_change_m;
+    }
+    if (g_fake.delay_calls == g_fake.second_step_change_delay_call) {
+        g_fake.step_m = g_fake.step_after_second_change_m;
+    }
+    if (g_fake.delay_calls == g_fake.force_x_delay_call) {
+        g_fake.x = g_fake.forced_x_m;
+    }
     if (g_fake.delay_calls == g_fake.invalid_yaw_delay_call) {
         g_fake.yaw = NAN;
     }
@@ -283,6 +298,88 @@ static void test_timeout_stops_with_error(void)
         telemetry.result == CONTEST_ROUTE_RUN_TIMEOUT);
 }
 
+static void test_d_must_reach_b_by_deadline(void)
+{
+    ContestRouteTelemetry telemetry;
+    ContestRouteRunResult result;
+
+    fake_reset(CONTEST_ROUTE_D);
+    g_fake.step_m = 0.0f;
+    result = ContestRouteControl_RunD();
+    ContestRouteControl_GetTelemetry(&telemetry);
+
+    expect_true("D B deadline result", result == CONTEST_ROUTE_RUN_TIMEOUT);
+    expect_true("D B deadline stops", g_fake.stop_calls == 1U);
+    expect_true("D B deadline expires at 15 seconds",
+        telemetry.elapsed_ms == 15000U);
+    expect_true("D B deadline remains on AB",
+        telemetry.segment == CONTEST_SEGMENT_AB);
+    expect_true("D B deadline telemetry result",
+        telemetry.result == CONTEST_ROUTE_RUN_TIMEOUT);
+}
+
+#ifndef TEST_SCALED_ARC
+static void test_h_can_finish_at_total_deadline(void)
+{
+    ContestRouteSpec spec;
+    ContestRouteRunResult result;
+
+    fake_reset(CONTEST_ROUTE_H);
+    (void) ContestRoute_GetSpec(CONTEST_ROUTE_H, &spec);
+    g_fake.force_x_delay_call = CONTEST_H_TIMEOUT_MS /
+        CONTEST_CONTROL_PERIOD_MS;
+    g_fake.forced_x_m = ContestRoute_TotalLength(&spec) - spec.stop_lead_m +
+        0.001f;
+    g_fake.step_change_delay_call = g_fake.force_x_delay_call - 200U;
+    g_fake.step_after_change_m = g_fake.forced_x_m / 200.0f;
+    result = ContestRouteControl_RunH();
+
+    expect_true("H completion at 20 seconds is accepted",
+        result == CONTEST_ROUTE_RUN_COMPLETE);
+}
+
+static void test_d_reaching_b_at_deadline_is_accepted(void)
+{
+    ContestRouteRunResult result;
+
+    fake_reset(CONTEST_ROUTE_D);
+    g_fake.step_change_delay_call = 15000U / CONTEST_CONTROL_PERIOD_MS;
+    g_fake.step_after_change_m = 0.03f;
+    g_fake.force_x_delay_call = 15000U / CONTEST_CONTROL_PERIOD_MS;
+    g_fake.forced_x_m = 1.50f;
+    g_fake.step_m = (g_fake.forced_x_m - 0.01f) /
+        (float) (g_fake.force_x_delay_call - 1U);
+    result = ContestRouteControl_RunD();
+
+    expect_true("D reaching B at 15 seconds is accepted",
+        result == CONTEST_ROUTE_RUN_COMPLETE);
+}
+
+static void test_d_can_finish_at_total_deadline(void)
+{
+    ContestRouteSpec spec;
+    ContestRouteRunResult result;
+    float stop_distance_m;
+
+    fake_reset(CONTEST_ROUTE_D);
+    (void) ContestRoute_GetSpec(CONTEST_ROUTE_D, &spec);
+    stop_distance_m = ContestRoute_TotalLength(&spec) - spec.stop_lead_m;
+    g_fake.step_m = 0.04f;
+    g_fake.step_change_delay_call = 38U;
+    g_fake.force_x_delay_call = CONTEST_D_TIMEOUT_MS /
+        CONTEST_CONTROL_PERIOD_MS;
+    g_fake.forced_x_m = stop_distance_m + 0.02f;
+    g_fake.step_after_change_m = 0.0f;
+    g_fake.second_step_change_delay_call = g_fake.force_x_delay_call - 200U;
+    g_fake.step_after_second_change_m = (g_fake.forced_x_m - 1.52f) /
+        200.0f;
+    result = ContestRouteControl_RunD();
+
+    expect_true("D completion at 90 seconds is accepted",
+        result == CONTEST_ROUTE_RUN_COMPLETE);
+}
+#endif
+
 static void test_drive_error_stops_with_error(void)
 {
     ContestRouteTelemetry telemetry;
@@ -312,6 +409,12 @@ int main(void)
     test_odom_jump_stops_with_error();
     test_invalid_yaw_stops_with_error();
     test_timeout_stops_with_error();
+    test_d_must_reach_b_by_deadline();
+#ifndef TEST_SCALED_ARC
+    test_h_can_finish_at_total_deadline();
+    test_d_reaching_b_at_deadline_is_accepted();
+    test_d_can_finish_at_total_deadline();
+#endif
     test_drive_error_stops_with_error();
 
     if (g_failures != 0) {

@@ -22,5 +22,6 @@ build_and_run() {
 
 build_and_run "$test_binary"
 build_and_run "$scaled_test_binary" \
+    -DTEST_SCALED_ARC \
     -DCONTEST_H_ARC_SCALE=1.5f \
     -DCONTEST_D_ARC_SCALE=0.5f

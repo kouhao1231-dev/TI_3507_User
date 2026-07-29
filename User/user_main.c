@@ -17,6 +17,7 @@ typedef enum {
 static volatile uint8_t g_route_running;
 static volatile uint8_t g_activated;
 static volatile RouteRequest g_route_request;
+static volatile uint8_t g_stop_epoch;
 
 static const char *route_mode_text(ContestRouteMode mode)
 {
@@ -95,6 +96,14 @@ static void route_update_display(void)
     }
 
     ContestRouteControl_GetTelemetry(&telemetry);
+    if ((g_route_running == 0U) &&
+        (telemetry.result == CONTEST_ROUTE_RUN_IDLE)) {
+        BoardOled_SetLine(0U, "K1 H");
+        BoardOled_SetLine(1U, "K2 D");
+        BoardOled_SetLine(2U, "K5 STOP");
+        BoardOled_SetLine(3U, "READY");
+        return;
+    }
     BoardOled_SetLine(0U, route_mode_text(telemetry.mode));
     BoardOled_SetLine(1U, route_segment_text(telemetry.segment));
     route_show_time_tenths(telemetry.elapsed_ms);
@@ -115,9 +124,11 @@ void UserLoop_100Hz(uint32_t now_ms)
     start_h = BoardKeys_WasPressed(BOARD_KEY_1);
     start_d = BoardKeys_WasPressed(BOARD_KEY_2);
     if (BoardKeys_WasPressed(BOARD_KEY_5) != 0U) {
+        g_route_request = ROUTE_REQUEST_NONE;
+        g_stop_epoch++;
         ContestRouteControl_RequestAbort();
-    }
-    if ((g_activated != 0U) && (g_route_running == 0U)) {
+    } else if ((g_activated != 0U) && (g_route_running == 0U) &&
+        (g_route_request == ROUTE_REQUEST_NONE)) {
         if (start_h != 0U) {
             g_route_request = ROUTE_REQUEST_H;
         } else if (start_d != 0U) {
@@ -167,25 +178,29 @@ int main(void)
     }
 
     for (;;) {
+        uint8_t stop_epoch = g_stop_epoch;
         RouteRequest request = g_route_request;
 
         if ((g_activated != 0U) && (request != ROUTE_REQUEST_NONE)) {
             ContestRouteRunResult result;
 
-            /* Set running before clearing the request so the ISR cannot queue a rerun. */
             g_route_running = 1U;
             g_route_request = ROUTE_REQUEST_NONE;
             ContestRouteControl_Init();
-            if (request == ROUTE_REQUEST_H) {
-                result = ContestRouteControl_RunH();
+            if (g_stop_epoch != stop_epoch) {
+                g_route_running = 0U;
             } else {
-                result = ContestRouteControl_RunD();
-            }
-            g_route_running = 0U;
-            if (result == CONTEST_ROUTE_RUN_COMPLETE) {
-                BoardBuzzer_BeepOk();
-            } else {
-                BoardBuzzer_BeepError();
+                if (request == ROUTE_REQUEST_H) {
+                    result = ContestRouteControl_RunH();
+                } else {
+                    result = ContestRouteControl_RunD();
+                }
+                g_route_running = 0U;
+                if (result == CONTEST_ROUTE_RUN_COMPLETE) {
+                    BoardBuzzer_BeepOk();
+                } else {
+                    BoardBuzzer_BeepError();
+                }
             }
         }
         Dcar_Service();

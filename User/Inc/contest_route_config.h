@@ -15,7 +15,7 @@
 #define CONTEST_H_ARC_SCALE             1.0f
 #endif
 #define CONTEST_H_STOP_LEAD_M           0.015f
-#define CONTEST_H_TIMEOUT_MS            25000U
+#define CONTEST_H_TIMEOUT_MS            20000U
 
 #define CONTEST_D_STRAIGHT_M            1.50f
 #define CONTEST_D_RADIUS_M              0.75f
@@ -25,7 +25,8 @@
 #define CONTEST_D_ARC_SCALE             1.0f
 #endif
 #define CONTEST_D_STOP_LEAD_M           0.010f
-#define CONTEST_D_TIMEOUT_MS            95000U
+#define CONTEST_D_B_DEADLINE_MS         15000U
+#define CONTEST_D_TIMEOUT_MS            90000U
 
 #define CONTEST_HEADING_KP              2.0f
 #define CONTEST_MAX_YAW_DELTA_RAD       0.02f

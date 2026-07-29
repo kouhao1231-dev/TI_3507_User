@@ -51,12 +51,12 @@ static void test_specs_and_total_lengths(void)
     expect_close("H radius", h.radius_m, 0.50f);
     expect_close("H speed", h.speed_mps, 0.35f);
     expect_close("H stop lead", h.stop_lead_m, 0.015f);
-    expect_true("H timeout", h.timeout_ms == 25000U);
+    expect_true("H contest time limit", h.timeout_ms == 20000U);
     expect_close("D straight", d.straight_m, 1.50f);
     expect_close("D radius", d.radius_m, 0.75f);
     expect_close("D speed", d.speed_mps, 0.12f);
     expect_close("D stop lead", d.stop_lead_m, 0.010f);
-    expect_true("D timeout", d.timeout_ms == 95000U);
+    expect_true("D contest time limit", d.timeout_ms == 90000U);
     expect_close("H total length", ContestRoute_TotalLength(&h), 3.0f + TEST_PI);
     expect_close("D total length", ContestRoute_TotalLength(&d),
         3.0f + (1.5f * TEST_PI));
