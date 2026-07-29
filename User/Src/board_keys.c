@@ -53,6 +53,10 @@ void BoardKeys_Init(void)
     g_debounce_count = 0U;
 }
 
+/*
+ * 每 10ms 采样一次全部按键并做 3 个样本消抖。
+ * 开发板 K1 为高有效；开发板 K2 和转接板 K3/K4/K5 为低有效。
+ */
 void BoardKeys_Task100Hz(void)
 {
     uint8_t raw = 0U;
@@ -118,6 +122,7 @@ uint8_t BoardKeys_WasPressed(BoardKey key)
     return 1U;
 }
 
+/* 返回稳定后的持续按下状态，不会消费 WasPressed() 的按下边沿。 */
 uint8_t BoardKeys_IsPressed(BoardKey key)
 {
     if ((uint8_t) key >= BOARD_KEYS_COUNT) {

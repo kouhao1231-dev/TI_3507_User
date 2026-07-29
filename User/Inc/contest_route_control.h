@@ -16,6 +16,7 @@ typedef enum {
     CONTEST_ROUTE_RUN_INVALID_MODE
 } ContestRouteRunResult;
 
+/* 不依赖任何 UI；可由调试器或未来独立诊断模块按需读取。 */
 typedef struct {
     DcarStatus last_status;
     ContestRouteMode mode;
@@ -26,19 +27,19 @@ typedef struct {
     ContestRouteRunResult result;
 } ContestRouteTelemetry;
 
-/* Clears a pending abort and resets the controller telemetry to idle. */
+/* 清除上一次急停请求并把控制器状态复位为空闲。 */
 void ContestRouteControl_Init(void);
 
-/* Runs the complete fixed H route, then returns its terminal result. */
+/* 阻塞运行完整 H 胶囊路线，结束后返回完成/急停/故障原因。 */
 ContestRouteRunResult ContestRouteControl_RunH(void);
 
-/* Runs the complete fixed D route, then returns its terminal result. */
+/* 阻塞运行完整 D 胶囊路线，结束后返回完成/急停/故障原因。 */
 ContestRouteRunResult ContestRouteControl_RunD(void);
 
-/* Immediately stops the DCar and causes an active runner to return aborted. */
+/* 立即停车并使正在运行的 H/D 执行器尽快返回 ABORTED。 */
 void ContestRouteControl_RequestAbort(void);
 
-/* Copies the current volatile telemetry snapshot when telemetry is non-null. */
+/* 非空指针时复制当前遥测快照；该函数不访问屏幕或串口。 */
 void ContestRouteControl_GetTelemetry(ContestRouteTelemetry *telemetry);
 
 #endif

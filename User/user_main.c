@@ -18,10 +18,20 @@ typedef enum {
     ROUTE_REQUEST_D
 } RouteRequest;
 
+/*
+ * 这三个量只负责“按键请求—主线程执行”的最小状态同步。
+ * 它们不包含 OLED、蜂鸣器、RGB、UART 或传感器状态。
+ */
 static volatile uint8_t g_route_running;
 static volatile RouteRequest g_route_request;
 static volatile uint8_t g_stop_epoch;
 
+/*
+ * 100Hz 按键入口：
+ *   开发板 K1 产生 H 请求，开发板 K2 产生 D 请求；
+ *   转接板 K5 优先级最高，清除待运行请求并立即停车。
+ * 回调只登记请求，不在中断上下文中执行整圈阻塞路线。
+ */
 void UserLoop_100Hz(uint32_t now_ms)
 {
     uint8_t start_h;
@@ -46,6 +56,7 @@ void UserLoop_100Hz(uint32_t now_ms)
     }
 }
 
+/* 无头比赛固件不使用其余周期槽，保留空实现以满足 DCar API。 */
 void UserLoop_50Hz(uint32_t now_ms)
 {
     (void) now_ms;
@@ -63,6 +74,11 @@ void UserLoop_10Hz(uint32_t now_ms)
 
 int main(void)
 {
+    /*
+     * 主函数只初始化运动必需模块。
+     * 路线执行期间 K5 仍由 100Hz 中断抢占；一次运行结束后回到待机，
+     * 不会因为上一次按键长按或可选外设状态自动重跑。
+     */
     Dcar_System_Init();
     BoardKeys_Init();
     ContestRouteControl_Init();
@@ -72,6 +88,10 @@ int main(void)
         RouteRequest request = g_route_request;
 
         if (request != ROUTE_REQUEST_NONE) {
+            /*
+             * 先占用运行状态并清空请求，再重置控制器。
+             * stop_epoch 防止 K5 恰好落在“取请求—开始路线”窗口时误启动。
+             */
             g_route_running = 1U;
             g_route_request = ROUTE_REQUEST_NONE;
             ContestRouteControl_Init();

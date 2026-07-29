@@ -4,6 +4,10 @@
 #include <stdio.h>
 
 #define TEST_PI 3.14159265358979323846f
+#define TEST_2024_HALF_ARC_YAW 3.12f
+#define TEST_2024_DISTANCE_SCALE 2.02f
+#define TEST_2024_HEIGHT_SCALE 2.06f
+#define TEST_2024_ARC_SCALE 2.22f
 #define TEST_EPSILON 0.0001f
 
 static int g_failures;
@@ -50,11 +54,27 @@ static void test_specs_and_total_lengths(void)
     expect_close("H straight", h.straight_m, 1.50f);
     expect_close("H radius", h.radius_m, 0.50f);
     expect_close("H speed", h.speed_mps, 0.35f);
+    expect_close("H reuses 2024 odom X calibration", h.odom_x_scale,
+        TEST_2024_DISTANCE_SCALE);
+    expect_close("H reuses 2024 odom Y calibration", h.odom_y_scale,
+        TEST_2024_HEIGHT_SCALE);
+    expect_close("H reuses 2024 arc calibration", h.arc_progress_scale,
+        TEST_2024_ARC_SCALE);
+    expect_close("H reuses 2024 half-arc yaw", h.half_arc_yaw_rad,
+        TEST_2024_HALF_ARC_YAW);
     expect_close("H stop lead", h.stop_lead_m, 0.015f);
     expect_true("H contest time limit", h.timeout_ms == 20000U);
     expect_close("D straight", d.straight_m, 1.50f);
     expect_close("D radius", d.radius_m, 0.75f);
     expect_close("D speed", d.speed_mps, 0.12f);
+    expect_close("D reuses 2024 odom X calibration", d.odom_x_scale,
+        TEST_2024_DISTANCE_SCALE);
+    expect_close("D reuses 2024 odom Y calibration", d.odom_y_scale,
+        TEST_2024_HEIGHT_SCALE);
+    expect_close("D reuses 2024 arc calibration", d.arc_progress_scale,
+        TEST_2024_ARC_SCALE);
+    expect_close("D reuses 2024 half-arc yaw", d.half_arc_yaw_rad,
+        TEST_2024_HALF_ARC_YAW);
     expect_close("D stop lead", d.stop_lead_m, 0.010f);
     expect_true("D contest time limit", d.timeout_ms == 90000U);
     expect_close("H total length", ContestRoute_TotalLength(&h), 3.0f + TEST_PI);
@@ -79,26 +99,37 @@ static void test_route_boundaries(void)
             3.0f + TEST_PI },
         { "H before B", CONTEST_ROUTE_H, 1.499f, CONTEST_SEGMENT_AB, 0.0f,
             0.0f, 1.501f + TEST_PI },
-        { "H B", CONTEST_ROUTE_H, 1.50f, CONTEST_SEGMENT_BC, 0.0f, -2.0f,
+        { "H B", CONTEST_ROUTE_H, 1.50f, CONTEST_SEGMENT_BC, 0.0f,
+            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
             1.5f + TEST_PI },
         { "H BC midpoint", CONTEST_ROUTE_H,
             1.50f + (0.25f * TEST_PI), CONTEST_SEGMENT_BC,
-            -0.5f * TEST_PI, -2.0f, 1.5f + (0.75f * TEST_PI) },
+            -0.5f * TEST_2024_HALF_ARC_YAW,
+            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
+            1.5f + (0.75f * TEST_PI) },
         { "H C", CONTEST_ROUTE_H, 1.50f + (0.50f * TEST_PI),
-            CONTEST_SEGMENT_CD, -TEST_PI, 0.0f, 1.50f + (0.50f * TEST_PI) },
+            CONTEST_SEGMENT_CD, -TEST_2024_HALF_ARC_YAW, 0.0f,
+            1.50f + (0.50f * TEST_PI) },
         { "H D", CONTEST_ROUTE_H, 3.0f + (0.50f * TEST_PI),
-            CONTEST_SEGMENT_DA, -TEST_PI, -2.0f, 0.50f * TEST_PI },
+            CONTEST_SEGMENT_DA, -TEST_2024_HALF_ARC_YAW,
+            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
+            0.50f * TEST_PI },
         { "H DA midpoint", CONTEST_ROUTE_H,
             3.0f + (0.75f * TEST_PI), CONTEST_SEGMENT_DA,
-            -1.5f * TEST_PI, -2.0f, 0.25f * TEST_PI },
+            -1.5f * TEST_2024_HALF_ARC_YAW,
+            -(TEST_2024_HALF_ARC_YAW / (0.50f * TEST_PI)),
+            0.25f * TEST_PI },
         { "H completed", CONTEST_ROUTE_H, 3.0f + TEST_PI,
             CONTEST_SEGMENT_DONE, 0.0f, 0.0f, 0.0f },
         { "D B", CONTEST_ROUTE_D, 1.50f, CONTEST_SEGMENT_BC, 0.0f,
-            -(1.0f / 0.75f), 1.5f + (1.5f * TEST_PI) },
+            -(TEST_2024_HALF_ARC_YAW / (0.75f * TEST_PI)),
+            1.5f + (1.5f * TEST_PI) },
         { "D C", CONTEST_ROUTE_D, 1.50f + (0.75f * TEST_PI),
-            CONTEST_SEGMENT_CD, -TEST_PI, 0.0f, 1.5f + (0.75f * TEST_PI) },
+            CONTEST_SEGMENT_CD, -TEST_2024_HALF_ARC_YAW, 0.0f,
+            1.5f + (0.75f * TEST_PI) },
         { "D D", CONTEST_ROUTE_D, 3.0f + (0.75f * TEST_PI),
-            CONTEST_SEGMENT_DA, -TEST_PI, -(1.0f / 0.75f),
+            CONTEST_SEGMENT_DA, -TEST_2024_HALF_ARC_YAW,
+            -(TEST_2024_HALF_ARC_YAW / (0.75f * TEST_PI)),
             0.75f * TEST_PI },
         { "D completed", CONTEST_ROUTE_D, 3.0f + (1.5f * TEST_PI),
             CONTEST_SEGMENT_DONE, 0.0f, 0.0f, 0.0f }
@@ -123,7 +154,7 @@ static void test_route_boundaries(void)
 static void test_invalid_inputs_and_normalization(void)
 {
     ContestRouteReference reference;
-    ContestRouteSpec invalid_spec = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0U };
+    ContestRouteSpec invalid_spec = { 0 };
 
     expect_true("invalid spec fails",
         ContestRoute_GetSpec((ContestRouteMode) 99, &invalid_spec) == 0);

@@ -5,33 +5,47 @@
 #include <math.h>
 #include <stddef.h>
 
+/* H 题的题面几何、低风险速度和 2024 实车公共标定。 */
 static const ContestRouteSpec k_h_spec = {
     CONTEST_H_STRAIGHT_M,
     CONTEST_H_RADIUS_M,
     CONTEST_H_SPEED_MPS,
-    CONTEST_H_DISTANCE_SCALE,
-    CONTEST_H_ARC_SCALE,
+    CONTEST_H_ODOM_X_SCALE,
+    CONTEST_H_ODOM_Y_SCALE,
+    CONTEST_H_ARC_PROGRESS_SCALE,
+    CONTEST_H_HALF_ARC_YAW_RAD,
     CONTEST_H_STOP_LEAD_M,
     CONTEST_H_TIMEOUT_MS
 };
 
+/* D 题仅替换题面几何和速度，机械标定仍复用同一辆 2024 实车。 */
 static const ContestRouteSpec k_d_spec = {
     CONTEST_D_STRAIGHT_M,
     CONTEST_D_RADIUS_M,
     CONTEST_D_SPEED_MPS,
-    CONTEST_D_DISTANCE_SCALE,
-    CONTEST_D_ARC_SCALE,
+    CONTEST_D_ODOM_X_SCALE,
+    CONTEST_D_ODOM_Y_SCALE,
+    CONTEST_D_ARC_PROGRESS_SCALE,
+    CONTEST_D_HALF_ARC_YAW_RAD,
     CONTEST_D_STOP_LEAD_M,
     CONTEST_D_TIMEOUT_MS
 };
 
+/* 拦截会让路线长度、里程换算或圆弧参考失真的非法参数。 */
 static int contest_route_spec_is_valid(const ContestRouteSpec *spec)
 {
     return (spec != NULL) && isfinite(spec->straight_m) &&
-        isfinite(spec->radius_m) && (spec->straight_m > 0.0f) &&
-        (spec->radius_m > 0.0f);
+        isfinite(spec->radius_m) && isfinite(spec->odom_x_scale) &&
+        isfinite(spec->odom_y_scale) &&
+        isfinite(spec->arc_progress_scale) &&
+        isfinite(spec->half_arc_yaw_rad) &&
+        (spec->straight_m > 0.0f) && (spec->radius_m > 0.0f) &&
+        (spec->odom_x_scale > 0.0f) && (spec->odom_y_scale > 0.0f) &&
+        (spec->arc_progress_scale > 0.0f) &&
+        (spec->half_arc_yaw_rad > 0.0f);
 }
 
+/* 所有失败/完成出口统一写成无运动参考，防止残留曲率继续下发。 */
 static void contest_route_set_done(ContestRouteReference *reference)
 {
     reference->segment = CONTEST_SEGMENT_DONE;
@@ -40,6 +54,7 @@ static void contest_route_set_done(ContestRouteReference *reference)
     reference->remaining_m = 0.0f;
 }
 
+/* 将题型枚举转换为只读参数副本，调用者可以安全地做现场计算。 */
 int ContestRoute_GetSpec(ContestRouteMode mode, ContestRouteSpec *spec)
 {
     if (spec == NULL) {
@@ -59,6 +74,7 @@ int ContestRoute_GetSpec(ContestRouteMode mode, ContestRouteSpec *spec)
     }
 }
 
+/* 周长只使用题面几何；机械标定不改变地图本身的物理尺寸。 */
 float ContestRoute_TotalLength(const ContestRouteSpec *spec)
 {
     float total_m;
@@ -72,6 +88,7 @@ float ContestRoute_TotalLength(const ContestRouteSpec *spec)
     return isfinite(total_m) ? total_m : 0.0f;
 }
 
+/* 航向误差统一在一个圆周内比较，避免跨越 ±π 时突然反向纠偏。 */
 float ContestRoute_NormalizeAngle(float angle_rad)
 {
     float normalized_rad;
@@ -88,6 +105,10 @@ float ContestRoute_NormalizeAngle(float angle_rad)
     return normalized_rad - CONTEST_PI_F;
 }
 
+/*
+ * 按累计“标定路线进度”查询当前参考。
+ * 路段边界仍由题面长度/半径决定，半圆目标角使用 2024 的 3.12rad。
+ */
 int ContestRoute_Evaluate(ContestRouteMode mode, float distance_m,
     ContestRouteReference *reference)
 {
@@ -98,6 +119,8 @@ int ContestRoute_Evaluate(ContestRouteMode mode, float distance_m,
     float total_m;
     float arc_distance_m;
     float curve_progress_m;
+    float curve_fraction;
+    float calibrated_curvature_per_m;
 
     if (reference == NULL) {
         return 0;
@@ -113,6 +136,8 @@ int ContestRoute_Evaluate(ContestRouteMode mode, float distance_m,
     }
 
     arc_distance_m = CONTEST_PI_F * spec.radius_m;
+    calibrated_curvature_per_m =
+        -(spec.half_arc_yaw_rad / arc_distance_m);
     ab_end_m = spec.straight_m;
     bc_end_m = ab_end_m + arc_distance_m;
     cd_end_m = bc_end_m + spec.straight_m;
@@ -122,31 +147,42 @@ int ContestRoute_Evaluate(ContestRouteMode mode, float distance_m,
     }
 
     reference->remaining_m = total_m - distance_m;
+    /* AB：保持起跑航向直行。 */
     if (distance_m < ab_end_m) {
         reference->segment = CONTEST_SEGMENT_AB;
         return 1;
     }
+    /* BC：第一个顺时针半圆，目标航向从 0 连续变化到 -3.12rad。 */
     if (distance_m < bc_end_m) {
         curve_progress_m = distance_m - ab_end_m;
+        curve_fraction = curve_progress_m / arc_distance_m;
         reference->segment = CONTEST_SEGMENT_BC;
-        reference->relative_yaw_rad = -curve_progress_m / spec.radius_m;
-        reference->curvature_per_m = -1.0f / spec.radius_m;
+        reference->relative_yaw_rad =
+            -curve_fraction * spec.half_arc_yaw_rad;
+        reference->curvature_per_m = calibrated_curvature_per_m;
         return 1;
     }
+    /* CD：保持第一个半圆出口航向直行。 */
     if (distance_m < cd_end_m) {
         reference->segment = CONTEST_SEGMENT_CD;
-        reference->relative_yaw_rad = -CONTEST_PI_F;
+        reference->relative_yaw_rad = -spec.half_arc_yaw_rad;
         return 1;
     }
 
+    /* DA：第二个顺时针半圆，最终累计目标航向为 -6.24rad。 */
     curve_progress_m = distance_m - cd_end_m;
+    curve_fraction = curve_progress_m / arc_distance_m;
     reference->segment = CONTEST_SEGMENT_DA;
-    reference->relative_yaw_rad = -CONTEST_PI_F -
-        (curve_progress_m / spec.radius_m);
-    reference->curvature_per_m = -1.0f / spec.radius_m;
+    reference->relative_yaw_rad = -spec.half_arc_yaw_rad -
+        (curve_fraction * spec.half_arc_yaw_rad);
+    reference->curvature_per_m = calibrated_curvature_per_m;
     return 1;
 }
 
+/*
+ * 曲线段用 speed×curvature 做前馈，直线/曲线都叠加 IMU 航向误差闭环。
+ * 输出是一次 Dcar_Drive() 的目标航向增量，不是整段转角。
+ */
 float ContestRoute_ComputeYawDelta(float speed_mps, float curvature_per_m,
     float target_yaw_rad, float actual_yaw_rad, float period_s)
 {

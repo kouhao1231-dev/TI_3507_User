@@ -18,6 +18,7 @@ typedef struct {
     float y;
     float yaw;
     float step_m;
+    float step_y_m;
     float first_bc_yaw_delta;
     uint32_t tick_ms;
     unsigned int drive_calls;
@@ -144,6 +145,7 @@ void Dcar_Delay(uint32_t ms)
     g_fake.tick_ms += (g_fake.delay_calls == g_fake.jitter_delay_call) ?
         16U : 8U;
     g_fake.x += g_fake.step_m;
+    g_fake.y += g_fake.step_y_m;
     if (g_fake.delay_calls == g_fake.step_change_delay_call) {
         g_fake.step_m = g_fake.step_after_change_m;
     }
@@ -236,9 +238,9 @@ static void test_arc_scale_splits_a_straight_to_arc_step(ContestRouteMode mode,
 static void test_arc_scale_boundary_splitting(void)
 {
     test_arc_scale_splits_a_straight_to_arc_step(CONTEST_ROUTE_H,
-        CONTEST_H_ARC_SCALE, "H split-step aborts");
+        CONTEST_H_ARC_PROGRESS_SCALE, "H split-step aborts");
     test_arc_scale_splits_a_straight_to_arc_step(CONTEST_ROUTE_D,
-        CONTEST_D_ARC_SCALE, "D split-step aborts");
+        CONTEST_D_ARC_PROGRESS_SCALE, "D split-step aborts");
 }
 
 static void test_abort_stops_immediately(void)
@@ -388,7 +390,9 @@ static void test_curve_command_uses_16ms_since_previous_drive(void)
     expect_true("curve dt captures first BC command",
         g_fake.captured_first_bc_yaw_delta);
     expect_close("curve command uses measured 16ms dt",
-        g_fake.first_bc_yaw_delta, -0.0112f);
+        g_fake.first_bc_yaw_delta,
+        -0.35f * (CONTEST_H_HALF_ARC_YAW_RAD /
+            (CONTEST_PI_F * CONTEST_H_RADIUS_M)) * 0.016f);
 }
 
 static void test_d_must_reach_b_by_deadline(void)
@@ -493,8 +497,60 @@ static void test_drive_error_stops_with_error(void)
         telemetry.result == CONTEST_ROUTE_RUN_DRIVE_ERROR);
 }
 
+#ifdef TEST_CALIBRATED_ODOM
+static void test_2024_xy_scales_are_applied_to_odom_progress(void)
+{
+    ContestRouteTelemetry telemetry;
+    ContestRouteRunResult result;
+    float expected_m;
+
+    fake_reset(CONTEST_ROUTE_H);
+    g_fake.step_m = 0.01f;
+    g_fake.step_y_m = 0.02f;
+    g_fake.abort_delay_call = 2U;
+    result = ContestRouteControl_RunH();
+    ContestRouteControl_GetTelemetry(&telemetry);
+    expected_m = hypotf(0.01f * CONTEST_H_ODOM_X_SCALE,
+        0.02f * CONTEST_H_ODOM_Y_SCALE);
+
+    expect_true("calibrated XY setup aborts",
+        result == CONTEST_ROUTE_RUN_ABORTED);
+    expect_close("2024 X/Y scales convert one odom frame",
+        telemetry.distance_m, expected_m);
+}
+
+static void test_2024_arc_scale_is_applied_after_crossing_b(void)
+{
+    ContestRouteTelemetry telemetry;
+    ContestRouteRunResult result;
+    float calibrated_step_m;
+    float expected_m;
+
+    fake_reset(CONTEST_ROUTE_H);
+    g_fake.step_m = 0.04f;
+    g_fake.abort_delay_call = 20U;
+    result = ContestRouteControl_RunH();
+    ContestRouteControl_GetTelemetry(&telemetry);
+    calibrated_step_m = g_fake.step_m * CONTEST_H_ODOM_X_SCALE;
+    expected_m = CONTEST_H_STRAIGHT_M +
+        (((19.0f * calibrated_step_m) - CONTEST_H_STRAIGHT_M) *
+            CONTEST_H_ARC_PROGRESS_SCALE);
+
+    expect_true("calibrated arc setup aborts",
+        result == CONTEST_ROUTE_RUN_ABORTED);
+    expect_true("calibrated progress crossed into BC",
+        telemetry.segment == CONTEST_SEGMENT_BC);
+    expect_close("2024 arc scale applies only after B",
+        telemetry.distance_m, expected_m);
+}
+#endif
+
 int main(void)
 {
+#ifdef TEST_CALIBRATED_ODOM
+    test_2024_xy_scales_are_applied_to_odom_progress();
+    test_2024_arc_scale_is_applied_after_crossing_b();
+#else
     test_normal_h_and_d_runs();
     test_arc_scale_boundary_splitting();
     test_abort_stops_immediately();
@@ -512,6 +568,7 @@ int main(void)
     test_d_can_finish_at_total_deadline();
 #endif
     test_drive_error_stops_with_error();
+#endif
 
     if (g_failures != 0) {
         (void) fprintf(stderr, "%d route control test(s) failed\n", g_failures);

@@ -73,8 +73,10 @@ typedef struct {
     float straight_m;
     float radius_m;
     float speed_mps;
-    float distance_scale;
-    float arc_scale;
+    float odom_x_scale;
+    float odom_y_scale;
+    float arc_progress_scale;
+    float half_arc_yaw_rad;
     float stop_lead_m;
     uint32_t timeout_ms;
 } ContestRouteSpec;
@@ -151,8 +153,9 @@ from `DcarApi_GetTickMs()`:
 ```c
 while (!done) {
     Dcar_GetOdom(&x, &y, &yaw);
-    ds = hypotf(x - last_x, y - last_y);
-    distance_m += ds * spec.distance_scale;
+    dx = (x - last_x) * spec.odom_x_scale;
+    dy = (y - last_y) * spec.odom_y_scale;
+    distance_m += hypotf(dx, dy);
     reference = ContestRoute_Evaluate(mode, distance_m);
     yaw_delta = ContestRoute_ComputeYawDelta(
         spec.speed_mps, reference.curvature_per_m,
@@ -164,7 +167,10 @@ while (!done) {
 Dcar_Stop();
 ```
 
-Apply `arc_scale` only to curved-segment progress, use the configured stop lead and timeout, and update a volatile telemetry snapshot without formatting text in the control loop.
+Apply `arc_progress_scale` only to curved-segment progress, use the calibrated
+`half_arc_yaw_rad` for each half circle, use the configured stop lead and
+timeout, and update a volatile telemetry snapshot without formatting text in
+the control loop.
 
 - [ ] **Step 4: Run the focused controller test and verify GREEN**
 
