@@ -17,7 +17,7 @@ typedef struct {
     unsigned int fail_drive_call;
     unsigned int abort_delay_call;
     unsigned int invalid_yaw_delay_call;
-    float stop_x;
+    float stop_distance_m;
     int saw_abort_stop;
     int saw_segment_bc;
     int saw_segment_cd;
@@ -40,6 +40,15 @@ static void expect_true(const char *name, int condition)
     }
 }
 
+static void expect_close(const char *name, float actual, float expected)
+{
+    if (fabsf(actual - expected) > 0.0001f) {
+        (void) fprintf(stderr, "%s: expected %.6f, got %.6f\n", name,
+            (double) expected, (double) actual);
+        g_failures++;
+    }
+}
+
 static void fake_reset(ContestRouteMode mode)
 {
     g_fake = (FakeDcar) { 0 };
@@ -51,19 +60,18 @@ static void fake_reset(ContestRouteMode mode)
 
 DcarStatus Dcar_Drive(float vx, float yaw_delta)
 {
-    ContestRouteReference reference;
+    ContestRouteTelemetry telemetry;
 
-    (void) yaw_delta;
     g_fake.drive_calls++;
     expect_true("drive speed is non-zero", fabsf(vx) > 0.0f);
-    (void) ContestRoute_Evaluate(g_fake.mode, g_fake.x, &reference);
-    if (reference.segment == CONTEST_SEGMENT_BC) {
+    ContestRouteControl_GetTelemetry(&telemetry);
+    if (telemetry.segment == CONTEST_SEGMENT_BC) {
         g_fake.saw_segment_bc = 1;
         g_fake.saw_nonzero_yaw_bc = fabsf(yaw_delta) > 0.0f;
-    } else if (reference.segment == CONTEST_SEGMENT_CD) {
+    } else if (telemetry.segment == CONTEST_SEGMENT_CD) {
         g_fake.saw_segment_cd = 1;
         g_fake.saw_nonzero_yaw_cd = fabsf(yaw_delta) > 0.0f;
-    } else if (reference.segment == CONTEST_SEGMENT_DA) {
+    } else if (telemetry.segment == CONTEST_SEGMENT_DA) {
         g_fake.saw_segment_da = 1;
         g_fake.saw_nonzero_yaw_da = fabsf(yaw_delta) > 0.0f;
     }
@@ -75,8 +83,11 @@ DcarStatus Dcar_Drive(float vx, float yaw_delta)
 
 void Dcar_Stop(void)
 {
+    ContestRouteTelemetry telemetry;
+
     g_fake.stop_calls++;
-    g_fake.stop_x = g_fake.x;
+    ContestRouteControl_GetTelemetry(&telemetry);
+    g_fake.stop_distance_m = telemetry.distance_m;
 }
 
 void Dcar_GetOdom(float *x, float *y, float *yaw)
@@ -133,7 +144,7 @@ static void expect_route_success(ContestRouteMode mode, const char *name)
     expect_true("stopped only after final threshold",
         telemetry.distance_m >= stop_threshold_m);
     expect_true("stop did not occur before final threshold",
-        g_fake.stop_x >= stop_threshold_m);
+        g_fake.stop_distance_m >= stop_threshold_m);
     expect_true("last drive status is OK", telemetry.last_status == DCAR_STATUS_OK);
     expect_true("reported route mode", telemetry.mode == mode);
     expect_true("final segment is done", telemetry.segment == CONTEST_SEGMENT_DONE);
@@ -148,6 +159,37 @@ static void test_normal_h_and_d_runs(void)
 {
     expect_route_success(CONTEST_ROUTE_H, "H route completes");
     expect_route_success(CONTEST_ROUTE_D, "D route completes");
+}
+
+static void test_arc_scale_splits_a_straight_to_arc_step(ContestRouteMode mode,
+    float arc_scale, const char *name)
+{
+    ContestRouteTelemetry telemetry;
+    ContestRouteRunResult result;
+    float expected_distance_m;
+
+    fake_reset(mode);
+    g_fake.step_m = 0.04f;
+    g_fake.abort_delay_call = 39U;
+    result = (mode == CONTEST_ROUTE_H) ? ContestRouteControl_RunH() :
+        ContestRouteControl_RunD();
+    ContestRouteControl_GetTelemetry(&telemetry);
+    expected_distance_m = 1.48f + 0.02f + (0.02f * arc_scale);
+
+    expect_true(name, result == CONTEST_ROUTE_RUN_ABORTED);
+    expect_close("straight-to-arc progress is split at B",
+        telemetry.distance_m, expected_distance_m);
+    expect_true("straight-to-arc segment is BC",
+        telemetry.segment == CONTEST_SEGMENT_BC);
+    expect_true("abort stops once after split progress", g_fake.stop_calls == 1U);
+}
+
+static void test_arc_scale_boundary_splitting(void)
+{
+    test_arc_scale_splits_a_straight_to_arc_step(CONTEST_ROUTE_H,
+        CONTEST_H_ARC_SCALE, "H split-step aborts");
+    test_arc_scale_splits_a_straight_to_arc_step(CONTEST_ROUTE_D,
+        CONTEST_D_ARC_SCALE, "D split-step aborts");
 }
 
 static void test_abort_stops_immediately(void)
@@ -167,6 +209,26 @@ static void test_abort_stops_immediately(void)
     expect_true("abort telemetry inactive", telemetry.active == 0U);
     expect_true("abort telemetry result",
         telemetry.result == CONTEST_ROUTE_RUN_ABORTED);
+}
+
+static void test_init_clears_an_abort_for_a_later_route(void)
+{
+    ContestRouteRunResult result;
+
+    fake_reset(CONTEST_ROUTE_H);
+    g_fake.abort_delay_call = 1U;
+    result = ContestRouteControl_RunH();
+    expect_true("setup abort result", result == CONTEST_ROUTE_RUN_ABORTED);
+
+    g_fake = (FakeDcar) { 0 };
+    g_fake.mode = CONTEST_ROUTE_H;
+    g_fake.step_m = 0.03f;
+    ContestRouteControl_Init();
+    result = ContestRouteControl_RunH();
+
+    expect_true("init clears abort for later route",
+        result == CONTEST_ROUTE_RUN_COMPLETE);
+    expect_true("later route has one final stop", g_fake.stop_calls == 1U);
 }
 
 static void test_odom_jump_stops_with_error(void)
@@ -244,7 +306,9 @@ static void test_drive_error_stops_with_error(void)
 int main(void)
 {
     test_normal_h_and_d_runs();
+    test_arc_scale_boundary_splitting();
     test_abort_stops_immediately();
+    test_init_clears_an_abort_for_a_later_route();
     test_odom_jump_stops_with_error();
     test_invalid_yaw_stops_with_error();
     test_timeout_stops_with_error();

@@ -11,7 +11,9 @@
 #define CONTEST_H_RADIUS_M              0.50f
 #define CONTEST_H_SPEED_MPS             0.35f
 #define CONTEST_H_DISTANCE_SCALE        1.0f
+#ifndef CONTEST_H_ARC_SCALE
 #define CONTEST_H_ARC_SCALE             1.0f
+#endif
 #define CONTEST_H_STOP_LEAD_M           0.015f
 #define CONTEST_H_TIMEOUT_MS            25000U
 
@@ -19,7 +21,9 @@
 #define CONTEST_D_RADIUS_M              0.75f
 #define CONTEST_D_SPEED_MPS             0.12f
 #define CONTEST_D_DISTANCE_SCALE        1.0f
+#ifndef CONTEST_D_ARC_SCALE
 #define CONTEST_D_ARC_SCALE             1.0f
+#endif
 #define CONTEST_D_STOP_LEAD_M           0.010f
 #define CONTEST_D_TIMEOUT_MS            95000U
 

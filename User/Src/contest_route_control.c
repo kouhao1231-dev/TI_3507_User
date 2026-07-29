@@ -62,6 +62,76 @@ static int contest_route_control_is_arc(ContestRouteSegment segment)
     return (segment == CONTEST_SEGMENT_BC) || (segment == CONTEST_SEGMENT_DA);
 }
 
+static float contest_route_control_segment_remaining(const ContestRouteSpec *spec,
+    ContestRouteSegment segment, float distance_m)
+{
+    float arc_m = CONTEST_PI_F * spec->radius_m;
+    float boundary_m;
+
+    switch (segment) {
+    case CONTEST_SEGMENT_AB:
+        boundary_m = spec->straight_m;
+        break;
+    case CONTEST_SEGMENT_BC:
+        boundary_m = spec->straight_m + arc_m;
+        break;
+    case CONTEST_SEGMENT_CD:
+        boundary_m = (2.0f * spec->straight_m) + arc_m;
+        break;
+    case CONTEST_SEGMENT_DA:
+        boundary_m = (2.0f * spec->straight_m) + (2.0f * arc_m);
+        break;
+    default:
+        return 0.0f;
+    }
+    return boundary_m - distance_m;
+}
+
+static int contest_route_control_advance_distance(ContestRouteMode mode,
+    const ContestRouteSpec *spec, float raw_ds, float *distance_m,
+    ContestRouteReference *reference)
+{
+    float raw_remaining_m;
+
+    if ((isfinite(raw_ds) == 0) || (isfinite(spec->distance_scale) == 0) ||
+        (isfinite(spec->arc_scale) == 0) || (spec->distance_scale <= 0.0f) ||
+        (spec->arc_scale <= 0.0f)) {
+        return 0;
+    }
+
+    raw_remaining_m = raw_ds * spec->distance_scale;
+    while (raw_remaining_m > 0.0f) {
+        float segment_remaining_m;
+        float segment_scale;
+        float raw_to_boundary_m;
+
+        if (ContestRoute_Evaluate(mode, *distance_m, reference) == 0) {
+            return 0;
+        }
+        if (reference->segment == CONTEST_SEGMENT_DONE) {
+            break;
+        }
+        segment_scale = contest_route_control_is_arc(reference->segment) != 0 ?
+            spec->arc_scale : 1.0f;
+        segment_remaining_m = contest_route_control_segment_remaining(spec,
+            reference->segment, *distance_m);
+        raw_to_boundary_m = segment_remaining_m / segment_scale;
+        if ((isfinite(raw_to_boundary_m) == 0) || (raw_to_boundary_m <= 0.0f)) {
+            return 0;
+        }
+        if (raw_remaining_m < raw_to_boundary_m) {
+            *distance_m += raw_remaining_m * segment_scale;
+            raw_remaining_m = 0.0f;
+        } else {
+            *distance_m += segment_remaining_m;
+            raw_remaining_m -= raw_to_boundary_m;
+        }
+    }
+
+    return (isfinite(*distance_m) != 0) &&
+        (ContestRoute_Evaluate(mode, *distance_m, reference) != 0);
+}
+
 static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
 {
     ContestRouteSpec spec;
@@ -132,13 +202,8 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
         }
         last_x = x;
         last_y = y;
-        ds *= spec.distance_scale;
-        if (contest_route_control_is_arc(reference.segment) != 0) {
-            ds *= spec.arc_scale;
-        }
-        distance_m += ds;
-        if ((isfinite(distance_m) == 0) ||
-            (ContestRoute_Evaluate(mode, distance_m, &reference) == 0)) {
+        if (contest_route_control_advance_distance(mode, &spec, ds, &distance_m,
+            &reference) == 0) {
             result = CONTEST_ROUTE_RUN_ODOM_JUMP;
             Dcar_Stop();
             break;
