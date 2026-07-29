@@ -128,14 +128,15 @@ H 的理论匀速圈时约 17.55 s，给 20 s 留出约 2.45 s；再慢将明显
 现场只需调整：
 
 - `CONTEST_H_SPEED_MPS` / `CONTEST_D_SPEED_MPS`
-- `CONTEST_H/D_ODOM_X_SCALE`（2024 实车值 2.02）
-- `CONTEST_H/D_ODOM_Y_SCALE`（2024 实车值 2.06）
-- `CONTEST_H/D_ARC_PROGRESS_SCALE`（2024 实车值 2.22）
+- `CONTEST_H/D_FORWARD_DISTANCE_SCALE`（2024 实车值 2.02）
 - `CONTEST_H/D_HALF_ARC_YAW_RAD`（2024 实车值 3.12rad）
 - `CONTEST_H_STOP_LEAD_M` / `CONTEST_D_STOP_LEAD_M`
 - `CONTEST_HEADING_KP`
 
-先标直线距离比例，再标单个半圆角度/回线误差，最后调 A 点停车提前量。D 题需分别用空载、投放后载荷和无人机落车载荷验证。
+2.02 统一用于原始前向里程和流式曲率前馈。2024 的 2.06 仅用于旧版横向诊断日志；2.22 仅用于
+`Dcar_Arc(题面半径/2.22, ...)` 的指令半径修正。当前连续流式控制不把二者乘入累计里程，
+避免改变原参数语义。先核对单个半圆角度/回线误差，再调 A 点停车提前量。D 题需分别用空载、
+投放后载荷和无人机落车载荷验证。
 
 ## 测试
 

@@ -10,9 +10,7 @@ static const ContestRouteSpec k_h_spec = {
     CONTEST_H_STRAIGHT_M,
     CONTEST_H_RADIUS_M,
     CONTEST_H_SPEED_MPS,
-    CONTEST_H_ODOM_X_SCALE,
-    CONTEST_H_ODOM_Y_SCALE,
-    CONTEST_H_ARC_PROGRESS_SCALE,
+    CONTEST_H_FORWARD_DISTANCE_SCALE,
     CONTEST_H_HALF_ARC_YAW_RAD,
     CONTEST_H_STOP_LEAD_M,
     CONTEST_H_TIMEOUT_MS
@@ -23,25 +21,21 @@ static const ContestRouteSpec k_d_spec = {
     CONTEST_D_STRAIGHT_M,
     CONTEST_D_RADIUS_M,
     CONTEST_D_SPEED_MPS,
-    CONTEST_D_ODOM_X_SCALE,
-    CONTEST_D_ODOM_Y_SCALE,
-    CONTEST_D_ARC_PROGRESS_SCALE,
+    CONTEST_D_FORWARD_DISTANCE_SCALE,
     CONTEST_D_HALF_ARC_YAW_RAD,
     CONTEST_D_STOP_LEAD_M,
     CONTEST_D_TIMEOUT_MS
 };
 
-/* 拦截会让路线长度、里程换算或圆弧参考失真的非法参数。 */
+/* 拦截会让路线长度、速度前馈或圆弧参考失真的非法参数。 */
 static int contest_route_spec_is_valid(const ContestRouteSpec *spec)
 {
     return (spec != NULL) && isfinite(spec->straight_m) &&
-        isfinite(spec->radius_m) && isfinite(spec->odom_x_scale) &&
-        isfinite(spec->odom_y_scale) &&
-        isfinite(spec->arc_progress_scale) &&
+        isfinite(spec->radius_m) &&
+        isfinite(spec->forward_distance_scale) &&
         isfinite(spec->half_arc_yaw_rad) &&
         (spec->straight_m > 0.0f) && (spec->radius_m > 0.0f) &&
-        (spec->odom_x_scale > 0.0f) && (spec->odom_y_scale > 0.0f) &&
-        (spec->arc_progress_scale > 0.0f) &&
+        (spec->forward_distance_scale > 0.0f) &&
         (spec->half_arc_yaw_rad > 0.0f);
 }
 
@@ -106,8 +100,8 @@ float ContestRoute_NormalizeAngle(float angle_rad)
 }
 
 /*
- * 按累计“标定路线进度”查询当前参考。
- * 路段边界仍由题面长度/半径决定，半圆目标角使用 2024 的 3.12rad。
+ * 按里程计累计的实际路线进度查询当前参考。
+ * 路段边界由题面长度/半径决定，半圆目标角使用 2024 的 3.12rad。
  */
 int ContestRoute_Evaluate(ContestRouteMode mode, float distance_m,
     ContestRouteReference *reference)

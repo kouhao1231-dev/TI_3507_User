@@ -21,9 +21,7 @@ typedef struct {
     float straight_m;             /* AB/CD 的题面直线长度，单位 m。 */
     float radius_m;               /* BC/DA 的题面半圆半径，单位 m。 */
     float speed_mps;              /* 下发给 Dcar_Drive() 的线速度。 */
-    float odom_x_scale;           /* 2024 标定：里程计世界 X 比例。 */
-    float odom_y_scale;           /* 2024 标定：里程计世界 Y 比例。 */
-    float arc_progress_scale;     /* 2024 标定：圆弧段额外进度比例。 */
+    float forward_distance_scale; /* 2024 标定：原始前向里程/速度模型比例。 */
     float half_arc_yaw_rad;       /* 2024 标定：单个大半圆有效转角。 */
     float stop_lead_m;            /* 为惯性预留的终点提前停车距离。 */
     uint32_t timeout_ms;          /* 本路线题面硬超时。 */
@@ -32,11 +30,11 @@ typedef struct {
 typedef struct {
     ContestRouteSegment segment;  /* 当前处于 AB/BC/CD/DA 或已完成。 */
     float relative_yaw_rad;       /* 相对起跑航向的目标角，顺时针为负。 */
-    float curvature_per_m;        /* 每米标定路线进度对应的目标航向变化。 */
+    float curvature_per_m;        /* 每米题面路线对应的目标航向变化。 */
     float remaining_m;            /* 距完整胶囊终点的剩余路线进度。 */
 } ContestRouteReference;
 
-/* 读取 H/D 的完整几何、速度和 2024 实车标定；成功返回 1。 */
+/* 读取 H/D 的完整几何、速度和可直接复用的 2024 标定；成功返回 1。 */
 int ContestRoute_GetSpec(ContestRouteMode mode, ContestRouteSpec *spec);
 
 /* 计算题面胶囊周长 2L+2πR；参数非法时返回 0。 */

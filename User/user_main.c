@@ -1,9 +1,8 @@
 /*
- * 2026 NUEDC H/D fixed-route headless entry point.
+ * 2026 电赛 H/D 固定路线无头主程序。
  *
- * Motion depends only on the DCar core, the TI development-board K1/K2
- * buttons, and the route controller. Optional OLED, buzzer, RGB, UART, and
- * sensor modules are deliberately absent from the startup and callback paths.
+ * 运动只依赖 DCar 内核、TI 开发板 K1/K2 和路线控制器。OLED、蜂鸣器、
+ * RGB、UART、光电等可选外设不参与初始化，也不会成为小车启动条件。
  */
 
 #include "dcar_api.h"

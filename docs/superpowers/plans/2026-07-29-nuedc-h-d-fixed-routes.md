@@ -73,9 +73,7 @@ typedef struct {
     float straight_m;
     float radius_m;
     float speed_mps;
-    float odom_x_scale;
-    float odom_y_scale;
-    float arc_progress_scale;
+    float forward_distance_scale;
     float half_arc_yaw_rad;
     float stop_lead_m;
     uint32_t timeout_ms;
@@ -153,12 +151,13 @@ from `DcarApi_GetTickMs()`:
 ```c
 while (!done) {
     Dcar_GetOdom(&x, &y, &yaw);
-    dx = (x - last_x) * spec.odom_x_scale;
-    dy = (y - last_y) * spec.odom_y_scale;
-    distance_m += hypotf(dx, dy);
+    dx = x - last_x;
+    dy = y - last_y;
+    distance_m += hypotf(dx, dy) * spec.forward_distance_scale;
     reference = ContestRoute_Evaluate(mode, distance_m);
     yaw_delta = ContestRoute_ComputeYawDelta(
-        spec.speed_mps, reference.curvature_per_m,
+        spec.speed_mps * spec.forward_distance_scale,
+        reference.curvature_per_m,
         start_yaw + reference.relative_yaw_rad, yaw,
         CONTEST_CONTROL_PERIOD_S);
     status = Dcar_Drive(spec.speed_mps, yaw_delta);
@@ -167,8 +166,11 @@ while (!done) {
 Dcar_Stop();
 ```
 
-Apply `arc_progress_scale` only to curved-segment progress, use the calibrated
-`half_arc_yaw_rad` for each half circle, use the configured stop lead and
+Multiply the direction-independent raw path displacement and streamed curve
+feedforward by the same `forward_distance_scale`. Use the calibrated
+`half_arc_yaw_rad` for each half circle. The preserved 2.06 value belongs to
+the old lateral diagnostic log; 2.22 belongs only to the old
+`Dcar_Arc(radius / scale, ...)` command path. Use the configured stop lead and
 timeout, and update a volatile telemetry snapshot without formatting text in
 the control loop.
 

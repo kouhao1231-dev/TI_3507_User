@@ -19,6 +19,7 @@ static volatile ContestRouteTelemetry s_telemetry = {
     CONTEST_ROUTE_RUN_IDLE
 };
 
+/* 集中更新无头遥测，避免各个退出分支漏写 active/result 等字段。 */
 static void contest_route_control_set_telemetry(ContestRouteMode mode,
     ContestRouteSegment segment, float distance_m, uint32_t elapsed_ms,
     uint8_t active, DcarStatus last_status, ContestRouteRunResult result)
@@ -63,98 +64,10 @@ void ContestRouteControl_GetTelemetry(ContestRouteTelemetry *telemetry)
     telemetry->result = s_telemetry.result;
 }
 
-/* 只有两个半圆段需要再应用 2024 圆弧进度标定。 */
-static int contest_route_control_is_arc(ContestRouteSegment segment)
-{
-    return (segment == CONTEST_SEGMENT_BC) || (segment == CONTEST_SEGMENT_DA);
-}
-
-/* 返回当前路段距离下一几何边界还有多少标定路线进度。 */
-static float contest_route_control_segment_remaining(const ContestRouteSpec *spec,
-    ContestRouteSegment segment, float distance_m)
-{
-    float arc_m = CONTEST_PI_F * spec->radius_m;
-    float boundary_m;
-
-    switch (segment) {
-    case CONTEST_SEGMENT_AB:
-        boundary_m = spec->straight_m;
-        break;
-    case CONTEST_SEGMENT_BC:
-        boundary_m = spec->straight_m + arc_m;
-        break;
-    case CONTEST_SEGMENT_CD:
-        boundary_m = (2.0f * spec->straight_m) + arc_m;
-        break;
-    case CONTEST_SEGMENT_DA:
-        boundary_m = (2.0f * spec->straight_m) + (2.0f * arc_m);
-        break;
-    default:
-        return 0.0f;
-    }
-    return boundary_m - distance_m;
-}
-
-/*
- * 把一帧原始世界坐标增量转换为 2024 标定后的路线进度。
- *
- * 先分别应用 X=2.02、Y=2.06，再在 BC/DA 应用圆弧比例 2.22。
- * 若一帧跨过直线/圆弧边界，会拆分该帧，避免把整帧套错比例。
- */
-static int contest_route_control_advance_distance(ContestRouteMode mode,
-    const ContestRouteSpec *spec, float raw_dx, float raw_dy,
-    float *distance_m,
-    ContestRouteReference *reference)
-{
-    float raw_remaining_m;
-
-    if ((isfinite(raw_dx) == 0) || (isfinite(raw_dy) == 0) ||
-        (isfinite(spec->odom_x_scale) == 0) ||
-        (isfinite(spec->odom_y_scale) == 0) ||
-        (isfinite(spec->arc_progress_scale) == 0) ||
-        (spec->odom_x_scale <= 0.0f) || (spec->odom_y_scale <= 0.0f) ||
-        (spec->arc_progress_scale <= 0.0f)) {
-        return 0;
-    }
-
-    raw_remaining_m = hypotf(raw_dx * spec->odom_x_scale,
-        raw_dy * spec->odom_y_scale);
-    while (raw_remaining_m > 0.0f) {
-        float segment_remaining_m;
-        float segment_scale;
-        float raw_to_boundary_m;
-
-        if (ContestRoute_Evaluate(mode, *distance_m, reference) == 0) {
-            return 0;
-        }
-        if (reference->segment == CONTEST_SEGMENT_DONE) {
-            break;
-        }
-        segment_scale = contest_route_control_is_arc(reference->segment) != 0 ?
-            spec->arc_progress_scale : 1.0f;
-        segment_remaining_m = contest_route_control_segment_remaining(spec,
-            reference->segment, *distance_m);
-        raw_to_boundary_m = segment_remaining_m / segment_scale;
-        if ((isfinite(raw_to_boundary_m) == 0) || (raw_to_boundary_m <= 0.0f)) {
-            return 0;
-        }
-        if (raw_remaining_m < raw_to_boundary_m) {
-            *distance_m += raw_remaining_m * segment_scale;
-            raw_remaining_m = 0.0f;
-        } else {
-            *distance_m += segment_remaining_m;
-            raw_remaining_m -= raw_to_boundary_m;
-        }
-    }
-
-    return (isfinite(*distance_m) != 0) &&
-        (ContestRoute_Evaluate(mode, *distance_m, reference) != 0);
-}
-
 /*
  * H/D 共用的阻塞式比赛执行器。
  *
- * 每 8ms 读取一次 IMU/里程计、更新标定路线进度并连续流式下发速度。
+ * 每 8ms 读取一次 IMU/里程计、累计实际位移并连续流式下发速度。
  * B/C/D 只切换参考曲率，不停车；仅完成、K5、超时、里程异常或驱动
  * 错误会调用 Dcar_Stop()。时间全部来自真实单调 tick。
  */
@@ -233,8 +146,14 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
             Dcar_Stop();
             break;
         }
-        if (contest_route_control_advance_distance(mode, &spec,
-            dx, dy, &distance_m, &reference) == 0) {
+        /*
+         * 世界坐标增量先合成为不依赖赛道朝向的原始路径长度，再统一乘
+         * 2024 前向距离标定 2.02。2.06/2.22 分别只属于横向诊断日志
+         * 和 Dcar_Arc() 半径指令，不能在这里再次参与路线进度。
+         */
+        distance_m += ds * spec.forward_distance_scale;
+        if ((isfinite(distance_m) == 0) ||
+            (ContestRoute_Evaluate(mode, distance_m, &reference) == 0)) {
             result = CONTEST_ROUTE_RUN_ODOM_JUMP;
             Dcar_Stop();
             break;
@@ -264,8 +183,13 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
         command_period_s = (first_drive != 0U) ?
             CONTEST_CONTROL_PERIOD_S :
             (float) (now_tick_ms - last_drive_tick_ms) * 0.001f;
+        /*
+         * Dcar_Drive() 仍接收今年设置的低速；曲率前馈使用同一个 2.02
+         * 前向标定，确保路线进度和目标航向采用同一套距离模型。
+         */
         status = Dcar_Drive(spec.speed_mps,
-            ContestRoute_ComputeYawDelta(spec.speed_mps,
+            ContestRoute_ComputeYawDelta(
+                spec.speed_mps * spec.forward_distance_scale,
                 reference.curvature_per_m,
                 start_yaw + reference.relative_yaw_rad, yaw,
                 command_period_s));

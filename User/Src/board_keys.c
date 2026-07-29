@@ -2,13 +2,13 @@
 
 #include "ti_msp_dl_config.h"
 
-/* TI development-board buttons, matching the proven 2024 H route firmware. */
+/* TI 开发板实体 K1/K2；引脚和有效电平沿用 2024 H 题实测配置。 */
 #define DEVBOARD_KEY1_PIN       DL_GPIO_PIN_18
 #define DEVBOARD_KEY1_IOMUX     IOMUX_PINCM40
 #define DEVBOARD_KEY2_PIN       DL_GPIO_PIN_21
 #define DEVBOARD_KEY2_IOMUX     IOMUX_PINCM49
 
-/* Adapter-board keys retained for the unused K3/K4 and emergency-stop K5. */
+/* 转接板 K3/K4 暂不使用；转接板 K5 保留为独立急停键。 */
 #define ADAPTER_KEY3_PIN         DL_GPIO_PIN_19
 #define ADAPTER_KEY3_IOMUX       IOMUX_PINCM45
 #define ADAPTER_KEY4_PIN         DL_GPIO_PIN_23
@@ -26,13 +26,14 @@ static uint8_t g_stable_mask;
 static uint8_t g_last_raw_mask;
 static uint8_t g_debounce_count;
 
+/* 配置全部实体按键的上下拉，并清空消抖和按下边沿状态。 */
 void BoardKeys_Init(void)
 {
-    /* Development-board K1 is active high and therefore uses a pull-down. */
+    /* 开发板 K1 高电平有效，所以输入配置为下拉。 */
     DL_GPIO_initDigitalInputFeatures(DEVBOARD_KEY1_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
-    /* Development-board K2 and the adapter keys are active low. */
+    /* 开发板 K2 以及转接板按键均为低电平有效，所以配置为上拉。 */
     DL_GPIO_initDigitalInputFeatures(DEVBOARD_KEY2_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
@@ -105,6 +106,7 @@ uint8_t BoardKeys_GetPressedMask(void)
     return g_pressed_mask;
 }
 
+/* 读取并消费一次“刚按下”事件，长按不会反复触发路线。 */
 uint8_t BoardKeys_WasPressed(BoardKey key)
 {
     uint8_t mask;
@@ -132,6 +134,7 @@ uint8_t BoardKeys_IsPressed(BoardKey key)
     return (g_pressed_mask & (uint8_t) (1U << (uint8_t) key)) ? 1U : 0U;
 }
 
+/* 原始 GPIO 电平只供调试器排查接线和有效电平，不参与路线状态机。 */
 uint32_t BoardKeys_GetRawPALevel(void)
 {
     return g_pa_level;
