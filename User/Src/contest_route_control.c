@@ -118,6 +118,12 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
         }
 
         Dcar_GetOdom(&x, &y, &yaw);
+        if ((isfinite(x) == 0) || (isfinite(y) == 0) ||
+            (isfinite(yaw) == 0)) {
+            result = CONTEST_ROUTE_RUN_ODOM_JUMP;
+            Dcar_Stop();
+            break;
+        }
         ds = hypotf(x - last_x, y - last_y);
         if ((isfinite(ds) == 0) || (ds > CONTEST_MAX_ODOM_STEP_M)) {
             result = CONTEST_ROUTE_RUN_ODOM_JUMP;
