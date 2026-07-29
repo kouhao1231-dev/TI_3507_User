@@ -14,7 +14,9 @@
 - Implement on `feature/2026-nuedc-h-d-fixed-routes`.
 - Do not use photoelectric, gray-scale, or line-following sensor modules.
 - Treat commit `c35d93d` as read-only 2024 reference code.
-- K1 starts H, K2 starts D, and K5 is emergency stop.
+- TI development-board K1 (PA18, active high) starts H, TI
+  development-board K2 (PB21, active low) starts D, and adapter-board K5 is
+  emergency stop.
 - H geometry is straight 1.50 m, radius 0.50 m, clockwise one lap.
 - D geometry is straight 1.50 m, radius 0.75 m, clockwise one lap.
 - Stream commands on the 8 ms tick; do not stop at B, C, or D.

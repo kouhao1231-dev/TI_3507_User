@@ -90,17 +90,17 @@ static void route_update_display(void)
     if (g_activated == 0U) {
         BoardOled_SetLine(0U, "NOT ACTIVATED");
         BoardOled_SetLine(1U, "CHECK LICENSE");
-        BoardOled_SetLine(2U, "K1 K2 DISABLED");
-        BoardOled_SetLine(3U, "K5 STOP");
+        BoardOled_SetLine(2U, "DEV KEYS OFF");
+        BoardOled_SetLine(3U, "ADP K5 STOP");
         return;
     }
 
     ContestRouteControl_GetTelemetry(&telemetry);
     if ((g_route_running == 0U) &&
         (telemetry.result == CONTEST_ROUTE_RUN_IDLE)) {
-        BoardOled_SetLine(0U, "K1 H");
-        BoardOled_SetLine(1U, "K2 D");
-        BoardOled_SetLine(2U, "K5 STOP");
+        BoardOled_SetLine(0U, "DEV K1 H");
+        BoardOled_SetLine(1U, "DEV K2 D");
+        BoardOled_SetLine(2U, "ADP K5 STOP");
         BoardOled_SetLine(3U, "READY");
         return;
     }
@@ -108,7 +108,7 @@ static void route_update_display(void)
     BoardOled_SetLine(1U, route_segment_text(telemetry.segment));
     route_show_time_tenths(telemetry.elapsed_ms);
     if (g_route_running != 0U) {
-        BoardOled_SetLine(3U, "RUN K5 STOP");
+        BoardOled_SetLine(3U, "ADP K5 STOP");
     } else {
         BoardOled_SetLine(3U, route_result_text(telemetry.result));
     }
