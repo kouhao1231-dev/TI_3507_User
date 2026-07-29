@@ -55,15 +55,15 @@ D 在 15 s 时仍处于 AB 则停车，整圈到 90 s 也停车。理论时间�
 | `HALF_ARC_YAW_RAD` | 3.12 rad | 每次 `Dcar_Arc()` 的顺时针半圆转角 |
 
 2024 的左右释放角、1.04/1.02 m 斜线、灰度增益和高速任务参数属于旧赛道动作，没有混入今年的
-胶囊路线。当前直接复用 2024 的 `Dcar_Arc()` 圆弧原语。最常改的四个参数位于配置文件顶部：
-`CONTEST_H/D_TURN_TRIGGER_RAW_ODOM_M` 和 `CONTEST_H/D_ARC_COMMAND_RADIUS_M`。H/D
-仍分别使用 0.35/0.12 m/s。建议每次只改一项并重新从 K1/K2 起跑：
+胶囊路线。当前直接复用 2024 的 `Dcar_Arc()` 圆弧原语。最常改的参数位于配置文件顶部：
+`CONTEST_H/D_TURN_TRIGGER_RAW_ODOM_M`、`CONTEST_H/D_ARC_COMMAND_RADIUS_M` 和
+`CONTEST_H/D_ARC_YAW_RAD`。H/D 仍分别使用 0.35/0.12 m/s。建议每次只改一项并重新从 K1/K2 起跑：
 
 1. 车体放平静止，按 SDK 说明完成陀螺零偏校准。
 2. 调 `TURN_TRIGGER_RAW_ODOM_M`：调小更早转弯，调大更晚转弯。
 3. 调 `ARC_COMMAND_RADIUS_M`：调小圆弧更紧，调大圆弧更宽。
-4. 调整 `STOP_LEAD_M`，消除终点惯性造成的越线或欠行。
-5. 最后才调整速度、`HEADING_KP`、最大单次航向增量和超时；每次调整均复测整圈。
+4. 调 `ARC_YAW_RAD`：调大转得更多，调小转得更少；这里只填正数。
+5. 最后调整速度和超时；每次调整均复测整圈。
 
 ## 无光电限制与工程风险
 

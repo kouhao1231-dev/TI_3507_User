@@ -118,10 +118,12 @@ H 的理论匀速圈时约 17.55 s，给 20 s 留出约 2.45 s；再慢将明显
 - `CONTEST_H_SPEED_MPS` / `CONTEST_D_SPEED_MPS`
 - `CONTEST_H/D_TURN_TRIGGER_RAW_ODOM_M`
 - `CONTEST_H/D_ARC_COMMAND_RADIUS_M`
+- `CONTEST_H/D_ARC_YAW_RAD`
 - `CONTEST_H/D_FORWARD_DISTANCE_SCALE`（2024 实车值 2.02）
 - `CONTEST_H/D_HALF_ARC_YAW_RAD`（2024 实车值 3.12rad）
 
-触发里程调小会更早转弯，调大会更晚转弯；圆弧指令半径调小会转得更紧，调大会转得更宽。
+触发里程调小会更早转弯，调大会更晚转弯；圆弧指令半径调小会转得更紧，调大会转得更宽；
+圆弧转角调大转得更多，调小转得更少。
 
 ## 测试
 

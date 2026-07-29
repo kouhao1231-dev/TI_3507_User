@@ -60,6 +60,8 @@ static void test_specs_and_total_lengths(void)
         TEST_2024_DISTANCE_SCALE);
     expect_close("H reuses 2024 half-arc yaw", h.half_arc_yaw_rad,
         TEST_2024_HALF_ARC_YAW);
+    expect_close("H exposes an independent adjustable arc yaw",
+        h.half_arc_yaw_rad, CONTEST_H_ARC_YAW_RAD);
     expect_close("H stop lead", h.stop_lead_m, 0.015f);
     expect_true("H contest time limit", h.timeout_ms == 20000U);
     expect_close("D straight", d.straight_m, 1.50f);
@@ -70,6 +72,8 @@ static void test_specs_and_total_lengths(void)
         TEST_2024_DISTANCE_SCALE);
     expect_close("D reuses 2024 half-arc yaw", d.half_arc_yaw_rad,
         TEST_2024_HALF_ARC_YAW);
+    expect_close("D exposes an independent adjustable arc yaw",
+        d.half_arc_yaw_rad, CONTEST_D_ARC_YAW_RAD);
     expect_close("2024 lateral log calibration keeps original meaning",
         CONTEST_2024_LATERAL_LOG_SCALE, TEST_2024_HEIGHT_SCALE);
     expect_close("2024 Dcar_Arc radius calibration keeps original meaning",

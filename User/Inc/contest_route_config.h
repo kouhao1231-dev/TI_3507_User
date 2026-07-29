@@ -33,11 +33,15 @@
  *
  * 圆弧直接调用 Dcar_Arc(指令半径, -3.12, 速度)。
  * 指令半径调小：转弯更紧；调大：转弯更宽。
+ * 圆弧转角调大：转得更多；调小：转得更少。这里只填正数，
+ * 程序调用 Dcar_Arc() 时会自动加负号，保持顺时针方向。
  */
-#define CONTEST_H_TURN_TRIGGER_RAW_ODOM_M 0.7426f
+#define CONTEST_H_TURN_TRIGGER_RAW_ODOM_M 0.68f
 #define CONTEST_H_ARC_COMMAND_RADIUS_M    0.2252f
-#define CONTEST_D_TURN_TRIGGER_RAW_ODOM_M 0.7426f
+#define CONTEST_H_ARC_YAW_RAD             3.12f
+#define CONTEST_D_TURN_TRIGGER_RAW_ODOM_M 0.2f
 #define CONTEST_D_ARC_COMMAND_RADIUS_M    0.3378f
+#define CONTEST_D_ARC_YAW_RAD             3.12f
 
 /* H 题：AB/CD=1.50m，BC/DA 半径=0.50m。 */
 #define CONTEST_H_STRAIGHT_M            1.50f
@@ -47,7 +51,7 @@
 #define CONTEST_H_FORWARD_DISTANCE_SCALE CONTEST_2024_FORWARD_DISTANCE_SCALE
 #endif
 #ifndef CONTEST_H_HALF_ARC_YAW_RAD
-#define CONTEST_H_HALF_ARC_YAW_RAD      CONTEST_2024_HALF_ARC_YAW_RAD
+#define CONTEST_H_HALF_ARC_YAW_RAD      CONTEST_H_ARC_YAW_RAD
 #endif
 #define CONTEST_H_STOP_LEAD_M           0.015f
 #define CONTEST_H_TIMEOUT_MS            20000U
@@ -60,7 +64,7 @@
 #define CONTEST_D_FORWARD_DISTANCE_SCALE CONTEST_2024_FORWARD_DISTANCE_SCALE
 #endif
 #ifndef CONTEST_D_HALF_ARC_YAW_RAD
-#define CONTEST_D_HALF_ARC_YAW_RAD      CONTEST_2024_HALF_ARC_YAW_RAD
+#define CONTEST_D_HALF_ARC_YAW_RAD      CONTEST_D_ARC_YAW_RAD
 #endif
 #define CONTEST_D_STOP_LEAD_M           0.010f
 #define CONTEST_D_B_DEADLINE_MS         15000U
