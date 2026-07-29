@@ -4,7 +4,7 @@
 
 **Goal:** Build two selectable, sensorless fixed-route functions for the 2026 H and D contest tracks on the DCar-M0 main SDK.
 
-**Architecture:** A hardware-free route math module maps odometry distance onto a shared clockwise capsule profile. A controller streams `Dcar_Drive()` on the SDK's 8 ms monotonic tick so segment transitions never stop the car, while `user_main.c` owns keys, OLED, buzzer, activation gating, and emergency stop.
+**Architecture:** A hardware-free route math module maps odometry distance onto a shared clockwise capsule profile. A controller streams `Dcar_Drive()` on the SDK's 8 ms monotonic tick so segment transitions never stop the car, while the headless `user_main.c` owns only route keys and emergency stop. OLED, buzzer, RGB, UART, sensors, and application-level activation gating are excluded from the motion path.
 
 **Tech Stack:** C11-compatible embedded C, TI MSPM0G3507 DCar API, ARM GCC firmware build, host GCC unit tests.
 
@@ -192,8 +192,8 @@ git commit -m "feat: stream continuous H and D route control"
 - Create: `docs/2026_H_D_FIXED_ROUTE_GUIDE.md`
 
 **Interfaces:**
-- Consumes: Task 2 controller, existing board keys/OLED/buzzer APIs, and activation APIs.
-- Produces: complete firmware UX with K1/K2/K5.
+- Consumes: Task 2 controller and board-key API only.
+- Produces: headless K1/K2 route start with K5 emergency stop.
 
 - [ ] **Step 1: Write the integration behavior into the guide**
 
@@ -201,17 +201,18 @@ Document exact key mapping, startup placement, default speeds, geometry, no-sens
 
 - [ ] **Step 2: Replace the demonstration entry point**
 
-Initialize DCar, activation status, buzzer, keys, and OLED. In callbacks:
+Initialize only DCar, keys, and the route controller. In callbacks:
 
 ```c
 BoardKeys_Task100Hz();
 if (BoardKeys_WasPressed(BOARD_KEY_5)) {
     ContestRouteControl_RequestAbort();
 }
-BoardOled_Task10Hz();
 ```
 
-The main loop waits for K1/K2 requests, calls the corresponding H/D runner, reports completion, then returns to armed idle without auto-restarting.
+The main loop waits for K1/K2 requests, calls the corresponding H/D runner,
+then returns to idle without auto-restarting. It does not query optional
+peripheral state or gate the request on `Dcar_IsActivated()`.
 
 - [ ] **Step 3: Register the new source in Keil**
 
