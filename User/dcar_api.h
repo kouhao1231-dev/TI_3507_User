@@ -31,10 +31,11 @@ typedef enum {
 
 DcarStatus Dcar_Move(float dx, float dy, float final_yaw, float speed); /* 位置: 到点+最终朝向. 阻塞走完(可被Stop打断). dx前/dy左(m), final_yaw=相对当前航向增量(rad,0=不变); dx=dy=0时speed当角速度上限 */
 DcarStatus Dcar_Arc (float radius, float dyaw, float speed);           /* 圆弧: 半径(m)+转角(rad,±方向)+线速度. 阻塞 */
-DcarStatus Dcar_Drive(float vx, float yaw_delta);                      /* 速度流式遥控: vx前进(m/s)+yaw_delta航向增量(rad). 非阻塞, 需~200Hz持续刷新, 超~100ms自动停 */
+DcarStatus Dcar_Drive(float vx, float yaw_delta);                      /* 速度流式遥控: vx前进(m/s)+yaw_delta航向增量(rad). 非阻塞, 建议按8ms时基(~125Hz)持续刷新, 超~100ms自动停 */
 void Dcar_Stop(void);                                            /* 立即停车锁头, 并打断正在阻塞的 Move/Arc */
 void Dcar_GetOdom(float *x, float *y, float *yaw);               /* 读里程计: 世界系 x,y(m)+航向 yaw(rad). 不要的传 NULL */
-void Dcar_Delay(uint32_t ms);                                    /* 阻塞延时(内核照常在中断里跑) */
+uint32_t DcarApi_GetTickMs(void);                                /* 8ms 分辨率单调时钟, uint32_t 自然回绕 */
+void Dcar_Delay(uint32_t ms);                                    /* 8ms 量化阻塞延时(内核照常在中断里跑) */
 void Dcar_GyroCalibrate(void);                                   /* 手动陀螺零偏校准: 车放平静止调一次, 采真零偏存flash(空板首刷后调一次根治"自转/不锁头"). 阻塞~4s */
 
 /* ---- 用户周期回调 ---- (由内核 1kHz 用户定时器派发; 用户在 user_main.c 里实现)

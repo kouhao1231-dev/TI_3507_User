@@ -127,10 +127,10 @@ Dcar_Arc(0.20f, 1.5708f, 0.15f);  // 半径 0.2m 走 90° 弧, 0.15m/s
 ### 1.4 `DcarStatus Dcar_Drive(float vx, float yaw_delta)`
 流式速度遥控(**非阻塞**,立即返回)。`vx` 前进速度(m/s),`yaw_delta` 每次调用给目标航向加的增量(rad)。
 - ⚠ 差速轮**没有横移 vy**,只有前进 + 转向。
-- ⚠ **必须持续调用**(建议 ~200Hz,即每 ~5ms 一次)。**超过 ~100ms 没有新指令,看门狗自动停车**——这是失效保护:你的程序卡死/跑飞时车会自己停。
+- ⚠ **必须持续调用**（建议按内核 8 ms 时基，即约 125 Hz）。**超过 ~100ms 没有新指令，看门狗自动停车**——这是失效保护：你的程序卡死/跑飞时车会自己停。
 ```c
-for(int i=0;i<300;i++){ Dcar_Drive(0.2f, 0.0f);  Dcar_Delay(5); }  // 直行 1.5s
-for(int i=0;i<300;i++){ Dcar_Drive(0.2f, 0.01f); Dcar_Delay(5); }  // 边走边左转
+for(int i=0;i<188;i++){ Dcar_Drive(0.2f, 0.0f);    Dcar_Delay(8); }  // 直行约 1.5s
+for(int i=0;i<188;i++){ Dcar_Drive(0.2f, 0.0016f); Dcar_Delay(8); }  // 边走边左转
 Dcar_Stop();
 ```
 
@@ -143,8 +143,12 @@ Dcar_Stop();
 float x, y, yaw;  Dcar_GetOdom(&x, &y, &yaw);
 ```
 
-### 1.7 `void Dcar_Delay(uint32_t ms)`
-阻塞延时 `ms` 毫秒。**延时期间内核照常在中断里跑**(锁头、速度环、里程计都不停),只是挡住 `main()` 往下执行;顺带处理后台 calib 落盘。用来在两个动作之间插停顿。
+### 1.7 `uint32_t DcarApi_GetTickMs(void)` / `void Dcar_Delay(uint32_t ms)`
+`DcarApi_GetTickMs()` 返回 8 ms 分辨率的单调毫秒时钟；无符号减法可自然处理一次
+`uint32_t` 回绕。`Dcar_Delay(ms)` 按同一个 8 ms 时基量化阻塞，因此小于 8 ms 的正延时仍会
+等待一个完整 tick。**延时期间内核照常在中断里跑**（锁头、速度环、里程计都不停），只是挡住
+`main()` 往下执行；顺带处理后台 calib 落盘。截止时间和每周期航向增量应使用前后 tick 的实测
+差值，不应假定每次延时都精确等于传入值。
 
 ---
 

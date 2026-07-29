@@ -4,19 +4,30 @@
 #include "dcar_api.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
+
+typedef enum {
+    FAKE_MOTOR_ACTION_NONE = 0,
+    FAKE_MOTOR_ACTION_DRIVE,
+    FAKE_MOTOR_ACTION_STOP
+} FakeMotorAction;
 
 typedef struct {
     float x;
     float y;
     float yaw;
     float step_m;
+    float first_bc_yaw_delta;
+    uint32_t tick_ms;
     unsigned int drive_calls;
     unsigned int stop_calls;
     unsigned int delay_calls;
     unsigned int fail_drive_call;
+    unsigned int abort_drive_call;
     unsigned int abort_delay_call;
     unsigned int invalid_yaw_delay_call;
+    unsigned int jitter_delay_call;
     unsigned int step_change_delay_call;
     unsigned int second_step_change_delay_call;
     unsigned int force_x_delay_call;
@@ -31,8 +42,10 @@ typedef struct {
     int saw_nonzero_yaw_bc;
     int saw_nonzero_yaw_cd;
     int saw_nonzero_yaw_da;
+    int captured_first_bc_yaw_delta;
     ContestRouteMode mode;
     DcarStatus drive_status;
+    FakeMotorAction last_motor_action;
 } FakeDcar;
 
 static FakeDcar g_fake;
@@ -74,6 +87,10 @@ DcarStatus Dcar_Drive(float vx, float yaw_delta)
     if (telemetry.segment == CONTEST_SEGMENT_BC) {
         g_fake.saw_segment_bc = 1;
         g_fake.saw_nonzero_yaw_bc = fabsf(yaw_delta) > 0.0f;
+        if (g_fake.captured_first_bc_yaw_delta == 0) {
+            g_fake.first_bc_yaw_delta = yaw_delta;
+            g_fake.captured_first_bc_yaw_delta = 1;
+        }
     } else if (telemetry.segment == CONTEST_SEGMENT_CD) {
         g_fake.saw_segment_cd = 1;
         g_fake.saw_nonzero_yaw_cd = fabsf(yaw_delta) > 0.0f;
@@ -84,6 +101,15 @@ DcarStatus Dcar_Drive(float vx, float yaw_delta)
     if (g_fake.drive_calls == g_fake.fail_drive_call) {
         return g_fake.drive_status;
     }
+    if (g_fake.drive_calls == g_fake.abort_drive_call) {
+        ContestRouteControl_RequestAbort();
+    }
+    /*
+     * Model the critical ordering at the hardware boundary: an ISR may call
+     * Stop while Drive is in progress, then Drive can still publish its
+     * command before returning to the controller.
+     */
+    g_fake.last_motor_action = FAKE_MOTOR_ACTION_DRIVE;
     return DCAR_STATUS_OK;
 }
 
@@ -92,6 +118,7 @@ void Dcar_Stop(void)
     ContestRouteTelemetry telemetry;
 
     g_fake.stop_calls++;
+    g_fake.last_motor_action = FAKE_MOTOR_ACTION_STOP;
     ContestRouteControl_GetTelemetry(&telemetry);
     g_fake.stop_distance_m = telemetry.distance_m;
 }
@@ -111,9 +138,11 @@ void Dcar_GetOdom(float *x, float *y, float *yaw)
 
 void Dcar_Delay(uint32_t ms)
 {
-    expect_true("control period is five milliseconds",
+    expect_true("control period is eight milliseconds",
         ms == CONTEST_CONTROL_PERIOD_MS);
     g_fake.delay_calls++;
+    g_fake.tick_ms += (g_fake.delay_calls == g_fake.jitter_delay_call) ?
+        16U : 8U;
     g_fake.x += g_fake.step_m;
     if (g_fake.delay_calls == g_fake.step_change_delay_call) {
         g_fake.step_m = g_fake.step_after_change_m;
@@ -131,6 +160,11 @@ void Dcar_Delay(uint32_t ms)
         ContestRouteControl_RequestAbort();
         g_fake.saw_abort_stop = (g_fake.stop_calls == 1U);
     }
+}
+
+uint32_t DcarApi_GetTickMs(void)
+{
+    return g_fake.tick_ms;
 }
 
 static void expect_route_success(ContestRouteMode mode, const char *name)
@@ -226,6 +260,26 @@ static void test_abort_stops_immediately(void)
         telemetry.result == CONTEST_ROUTE_RUN_ABORTED);
 }
 
+static void test_abort_during_drive_reasserts_stop_after_drive_returns(void)
+{
+    ContestRouteTelemetry telemetry;
+    ContestRouteRunResult result;
+
+    fake_reset(CONTEST_ROUTE_H);
+    g_fake.abort_drive_call = 1U;
+    result = ContestRouteControl_RunH();
+    ContestRouteControl_GetTelemetry(&telemetry);
+
+    expect_true("drive-window abort result",
+        result == CONTEST_ROUTE_RUN_ABORTED);
+    expect_true("drive-window abort reasserts stop after Drive returns",
+        g_fake.last_motor_action == FAKE_MOTOR_ACTION_STOP);
+    expect_true("drive-window abort has no later delay",
+        g_fake.delay_calls == 0U);
+    expect_true("drive-window abort telemetry result",
+        telemetry.result == CONTEST_ROUTE_RUN_ABORTED);
+}
+
 static void test_init_clears_an_abort_for_a_later_route(void)
 {
     ContestRouteRunResult result;
@@ -296,6 +350,45 @@ static void test_timeout_stops_with_error(void)
         telemetry.elapsed_ms == CONTEST_H_TIMEOUT_MS);
     expect_true("timeout telemetry result",
         telemetry.result == CONTEST_ROUTE_RUN_TIMEOUT);
+}
+
+static void test_timeout_uses_real_tick_when_one_delay_takes_16ms(void)
+{
+    ContestRouteTelemetry telemetry;
+    ContestRouteRunResult result;
+
+    fake_reset(CONTEST_ROUTE_H);
+    g_fake.step_m = 0.0f;
+    g_fake.jitter_delay_call = 1U;
+    result = ContestRouteControl_RunH();
+    ContestRouteControl_GetTelemetry(&telemetry);
+
+    expect_true("jittered timeout result",
+        result == CONTEST_ROUTE_RUN_TIMEOUT);
+    expect_true("jittered timeout uses real 20 second tick",
+        telemetry.elapsed_ms == CONTEST_H_TIMEOUT_MS);
+    expect_true("one 16ms delay replaces two 8ms control intervals",
+        g_fake.delay_calls == 2499U);
+}
+
+static void test_curve_command_uses_16ms_since_previous_drive(void)
+{
+    ContestRouteRunResult result;
+
+    fake_reset(CONTEST_ROUTE_H);
+    g_fake.step_m = 0.03f;
+    g_fake.jitter_delay_call = 50U;
+    g_fake.force_x_delay_call = 50U;
+    g_fake.forced_x_m = 1.50f;
+    g_fake.abort_delay_call = 51U;
+    result = ContestRouteControl_RunH();
+
+    expect_true("curve dt setup aborts after first BC command",
+        result == CONTEST_ROUTE_RUN_ABORTED);
+    expect_true("curve dt captures first BC command",
+        g_fake.captured_first_bc_yaw_delta);
+    expect_close("curve command uses measured 16ms dt",
+        g_fake.first_bc_yaw_delta, -0.0112f);
 }
 
 static void test_d_must_reach_b_by_deadline(void)
@@ -405,10 +498,13 @@ int main(void)
     test_normal_h_and_d_runs();
     test_arc_scale_boundary_splitting();
     test_abort_stops_immediately();
+    test_abort_during_drive_reasserts_stop_after_drive_returns();
     test_init_clears_an_abort_for_a_later_route();
     test_odom_jump_stops_with_error();
     test_invalid_yaw_stops_with_error();
     test_timeout_stops_with_error();
+    test_timeout_uses_real_tick_when_one_delay_takes_16ms();
+    test_curve_command_uses_16ms_since_previous_drive();
     test_d_must_reach_b_by_deadline();
 #ifndef TEST_SCALED_ARC
     test_h_can_finish_at_total_deadline();

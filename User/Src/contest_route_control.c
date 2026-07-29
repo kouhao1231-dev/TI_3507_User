@@ -150,7 +150,12 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
     float distance_m = 0.0f;
     float total_m;
     float stop_threshold_m;
+    float command_period_s;
+    uint32_t start_tick_ms;
+    uint32_t last_drive_tick_ms;
+    uint32_t now_tick_ms;
     uint32_t elapsed_ms = 0U;
+    uint8_t first_drive = 1U;
 
     if (ContestRoute_GetSpec(mode, &spec) == 0) {
         contest_route_control_set_telemetry(mode, CONTEST_SEGMENT_DONE, 0.0f,
@@ -158,6 +163,8 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
         return result;
     }
 
+    start_tick_ms = DcarApi_GetTickMs();
+    last_drive_tick_ms = start_tick_ms;
     Dcar_GetOdom(&start_x, &start_y, &start_yaw);
     if ((isfinite(start_x) == 0) || (isfinite(start_y) == 0) ||
         (isfinite(start_yaw) == 0) ||
@@ -177,6 +184,8 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
         elapsed_ms, 1U, status, CONTEST_ROUTE_RUN_IDLE);
 
     for (;;) {
+        now_tick_ms = DcarApi_GetTickMs();
+        elapsed_ms = now_tick_ms - start_tick_ms;
         if (s_abort_requested != 0U) {
             result = CONTEST_ROUTE_RUN_ABORTED;
             break;
@@ -222,13 +231,17 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
             break;
         }
 
+        command_period_s = (first_drive != 0U) ?
+            CONTEST_CONTROL_PERIOD_S :
+            (float) (now_tick_ms - last_drive_tick_ms) * 0.001f;
         status = Dcar_Drive(spec.speed_mps,
             ContestRoute_ComputeYawDelta(spec.speed_mps,
                 reference.curvature_per_m,
                 start_yaw + reference.relative_yaw_rad, yaw,
-                CONTEST_CONTROL_PERIOD_S));
+                command_period_s));
         if (s_abort_requested != 0U) {
             result = CONTEST_ROUTE_RUN_ABORTED;
+            Dcar_Stop();
             break;
         }
         if (status != DCAR_STATUS_OK) {
@@ -237,8 +250,10 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
             break;
         }
 
+        first_drive = 0U;
+        last_drive_tick_ms = now_tick_ms;
         Dcar_Delay(CONTEST_CONTROL_PERIOD_MS);
-        elapsed_ms += CONTEST_CONTROL_PERIOD_MS;
+        elapsed_ms = DcarApi_GetTickMs() - start_tick_ms;
         contest_route_control_set_telemetry(mode, reference.segment, distance_m,
             elapsed_ms, 1U, status, CONTEST_ROUTE_RUN_IDLE);
     }

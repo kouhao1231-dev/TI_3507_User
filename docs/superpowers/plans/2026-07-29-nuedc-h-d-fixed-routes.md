@@ -4,7 +4,7 @@
 
 **Goal:** Build two selectable, sensorless fixed-route functions for the 2026 H and D contest tracks on the DCar-M0 main SDK.
 
-**Architecture:** A hardware-free route math module maps odometry distance onto a shared clockwise capsule profile. A controller streams `Dcar_Drive()` every 5 ms so segment transitions never stop the car, while `user_main.c` owns keys, OLED, buzzer, activation gating, and emergency stop.
+**Architecture:** A hardware-free route math module maps odometry distance onto a shared clockwise capsule profile. A controller streams `Dcar_Drive()` on the SDK's 8 ms monotonic tick so segment transitions never stop the car, while `user_main.c` owns keys, OLED, buzzer, activation gating, and emergency stop.
 
 **Tech Stack:** C11-compatible embedded C, TI MSPM0G3507 DCar API, ARM GCC firmware build, host GCC unit tests.
 
@@ -17,7 +17,7 @@
 - K1 starts H, K2 starts D, and K5 is emergency stop.
 - H geometry is straight 1.50 m, radius 0.50 m, clockwise one lap.
 - D geometry is straight 1.50 m, radius 0.75 m, clockwise one lap.
-- Stream commands every 5 ms; do not stop at B, C, or D.
+- Stream commands on the 8 ms tick; do not stop at B, C, or D.
 - Keep all field-tunable values in one configuration header.
 
 ---
@@ -85,7 +85,9 @@ typedef struct {
 } ContestRouteReference;
 ```
 
-Use literal defaults from the design document and keep `CONTEST_CONTROL_PERIOD_S=0.005f`.
+Use literal defaults from the design document and keep
+`CONTEST_CONTROL_PERIOD_S=0.008f` / `CONTEST_CONTROL_PERIOD_MS=8U`, matching the
+SDK's monotonic 8 ms tick.
 
 - [ ] **Step 4: Implement the smallest route evaluator**
 
@@ -141,7 +143,8 @@ Expected: compilation fails because the route controller does not exist.
 
 - [ ] **Step 3: Implement the route runner**
 
-Use a 5 ms loop:
+Use an 8 ms loop and derive both elapsed time and later command `dt` values
+from `DcarApi_GetTickMs()`:
 
 ```c
 while (!done) {

@@ -3,8 +3,8 @@
 
 /* Fixed-route geometry and field calibration defaults. */
 #define CONTEST_PI_F                    3.14159265358979323846f
-#define CONTEST_CONTROL_PERIOD_S        0.005f
-#define CONTEST_CONTROL_PERIOD_MS       5U
+#define CONTEST_CONTROL_PERIOD_S        0.008f
+#define CONTEST_CONTROL_PERIOD_MS       8U
 #define CONTEST_MAX_ODOM_STEP_M         0.05f
 
 #define CONTEST_H_STRAIGHT_M            1.50f
