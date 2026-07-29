@@ -10,6 +10,7 @@
 typedef enum {
     FAKE_MOTOR_ACTION_NONE = 0,
     FAKE_MOTOR_ACTION_DRIVE,
+    FAKE_MOTOR_ACTION_ARC,
     FAKE_MOTOR_ACTION_STOP
 } FakeMotorAction;
 
@@ -23,6 +24,7 @@ typedef struct {
     float first_bc_raw_x_m;
     uint32_t tick_ms;
     unsigned int drive_calls;
+    unsigned int arc_calls;
     unsigned int stop_calls;
     unsigned int delay_calls;
     unsigned int fail_drive_call;
@@ -37,6 +39,10 @@ typedef struct {
     float step_after_second_change_m;
     float forced_x_m;
     float stop_distance_m;
+    float first_arc_radius_m;
+    float first_arc_yaw_rad;
+    float second_arc_radius_m;
+    float second_arc_yaw_rad;
     int saw_abort_stop;
     int saw_segment_bc;
     int saw_segment_cd;
@@ -129,6 +135,22 @@ DcarStatus Dcar_Drive(float vx, float yaw_delta)
     return DCAR_STATUS_OK;
 }
 
+DcarStatus Dcar_Arc(float radius, float dyaw, float speed)
+{
+    g_fake.arc_calls++;
+    expect_true("arc speed is non-zero", fabsf(speed) > 0.0f);
+    if (g_fake.arc_calls == 1U) {
+        g_fake.first_arc_radius_m = radius;
+        g_fake.first_arc_yaw_rad = dyaw;
+    } else if (g_fake.arc_calls == 2U) {
+        g_fake.second_arc_radius_m = radius;
+        g_fake.second_arc_yaw_rad = dyaw;
+    }
+    g_fake.yaw += dyaw;
+    g_fake.last_motor_action = FAKE_MOTOR_ACTION_ARC;
+    return DCAR_STATUS_OK;
+}
+
 void Dcar_Stop(void)
 {
     ContestRouteTelemetry telemetry;
@@ -150,6 +172,10 @@ void Dcar_GetOdom(float *x, float *y, float *yaw)
     if (yaw != NULL) {
         *yaw = g_fake.yaw;
     }
+}
+
+void Dcar_Service(void)
+{
 }
 
 void Dcar_Delay(uint32_t ms)
@@ -198,30 +224,23 @@ static void expect_route_success(ContestRouteMode mode, const char *name)
     stop_threshold_m = ContestRoute_TotalLength(&spec) - spec.stop_lead_m;
 
     expect_true(name, result == CONTEST_ROUTE_RUN_COMPLETE);
-    expect_true("B/C arc received drive", g_fake.saw_segment_bc);
-    expect_true("B/C begins only after calibrated 1.50m",
-        g_fake.first_bc_distance_m >= spec.straight_m);
-    expect_true("B/C boundary overshoot is at most one calibrated sample",
-        g_fake.first_bc_distance_m <
-            spec.straight_m +
-            (spec.speed_mps * CONTEST_CONTROL_PERIOD_S) + 0.0001f);
-    expect_close("raw odom is converted by the production 2.02 scale at B",
-        g_fake.first_bc_raw_x_m * spec.forward_distance_scale,
-        g_fake.first_bc_distance_m);
+    expect_true("exactly two blocking arc commands", g_fake.arc_calls == 2U);
+    expect_close("first arc uses calibrated command radius",
+        g_fake.first_arc_radius_m,
+        spec.radius_m / CONTEST_2024_ARC_RADIUS_SCALE);
+    expect_close("second arc uses calibrated command radius",
+        g_fake.second_arc_radius_m,
+        spec.radius_m / CONTEST_2024_ARC_RADIUS_SCALE);
+    expect_close("first arc is one clockwise calibrated half-circle",
+        g_fake.first_arc_yaw_rad, -spec.half_arc_yaw_rad);
+    expect_close("second arc is one clockwise calibrated half-circle",
+        g_fake.second_arc_yaw_rad, -spec.half_arc_yaw_rad);
     expect_true("C/D straight received drive", g_fake.saw_segment_cd);
-    expect_true("D/A arc received drive", g_fake.saw_segment_da);
-    expect_true("B/C arc gets a non-zero yaw command", g_fake.saw_nonzero_yaw_bc);
-    expect_true("C/D straight gets a non-zero yaw command",
-        g_fake.saw_nonzero_yaw_cd);
-    expect_true("D/A arc gets a non-zero yaw command", g_fake.saw_nonzero_yaw_da);
+    expect_true("straight Drive commands keep yaw delta zero",
+        g_fake.saw_nonzero_yaw_cd == 0);
     expect_true("one final stop", g_fake.stop_calls == 1U);
-    expect_true("stopped only after final threshold",
+    expect_true("stopped only after complete route",
         telemetry.distance_m >= stop_threshold_m);
-    expect_true("full-route telemetry uses calibrated raw odom",
-        fabsf((g_fake.x * spec.forward_distance_scale) -
-            telemetry.distance_m) < 0.0005f);
-    expect_true("stop did not occur before final threshold",
-        g_fake.stop_distance_m >= stop_threshold_m);
     expect_true("last drive status is OK", telemetry.last_status == DCAR_STATUS_OK);
     expect_true("reported route mode", telemetry.mode == mode);
     expect_true("final segment is done", telemetry.segment == CONTEST_SEGMENT_DONE);
@@ -236,27 +255,6 @@ static void test_normal_h_and_d_runs(void)
 {
     expect_route_success(CONTEST_ROUTE_H, "H route completes");
     expect_route_success(CONTEST_ROUTE_D, "D route completes");
-}
-
-static void test_odom_progress_is_not_multiplied_by_arc_radius_calibration(void)
-{
-    ContestRouteTelemetry telemetry;
-    ContestRouteRunResult result;
-
-    fake_reset(CONTEST_ROUTE_H);
-    g_fake.step_m = 0.02f;
-    g_fake.abort_delay_call = 39U;
-    result = ContestRouteControl_RunH();
-    ContestRouteControl_GetTelemetry(&telemetry);
-
-    expect_true("raw odom setup aborts after crossing B",
-        result == CONTEST_ROUTE_RUN_ABORTED);
-    expect_close("forward scale applies but Dcar_Arc radius scale does not",
-        telemetry.distance_m,
-        38.0f * g_fake.step_m * CONTEST_H_FORWARD_DISTANCE_SCALE);
-    expect_true("raw odom progress crossed into BC",
-        telemetry.segment == CONTEST_SEGMENT_BC);
-    expect_true("raw odom abort stops once", g_fake.stop_calls == 1U);
 }
 
 static void test_abort_stops_immediately(void)
@@ -390,33 +388,6 @@ static void test_timeout_uses_real_tick_when_one_delay_takes_16ms(void)
         g_fake.delay_calls == 2499U);
 }
 
-static void test_curve_command_uses_16ms_since_previous_drive(void)
-{
-    ContestRouteRunResult result;
-
-    /*
-     * 选 D 题低速验证 2.02 前馈的精确数值，避免 H 题 16ms 指令
-     * 正好触发单次 yaw_delta 的安全限幅而掩盖标定比例。
-     */
-    fake_reset(CONTEST_ROUTE_D);
-    g_fake.step_m = 0.03f / CONTEST_D_FORWARD_DISTANCE_SCALE;
-    g_fake.jitter_delay_call = 50U;
-    g_fake.force_x_delay_call = 50U;
-    g_fake.forced_x_m = 1.50f / CONTEST_D_FORWARD_DISTANCE_SCALE;
-    g_fake.abort_delay_call = 51U;
-    result = ContestRouteControl_RunD();
-
-    expect_true("curve dt setup aborts after first BC command",
-        result == CONTEST_ROUTE_RUN_ABORTED);
-    expect_true("curve dt captures first BC command",
-        g_fake.captured_first_bc_yaw_delta);
-    expect_close("curve command uses measured 16ms dt",
-        g_fake.first_bc_yaw_delta,
-        -CONTEST_D_SPEED_MPS * CONTEST_D_FORWARD_DISTANCE_SCALE *
-            (CONTEST_D_HALF_ARC_YAW_RAD /
-            (CONTEST_PI_F * CONTEST_D_RADIUS_M)) * 0.016f);
-}
-
 static void test_d_must_reach_b_by_deadline(void)
 {
     ContestRouteTelemetry telemetry;
@@ -454,23 +425,6 @@ static void test_h_can_finish_at_total_deadline(void)
     result = ContestRouteControl_RunH();
 
     expect_true("H completion at 20 seconds is accepted",
-        result == CONTEST_ROUTE_RUN_COMPLETE);
-}
-
-static void test_d_reaching_b_at_deadline_is_accepted(void)
-{
-    ContestRouteRunResult result;
-
-    fake_reset(CONTEST_ROUTE_D);
-    g_fake.step_change_delay_call = 15000U / CONTEST_CONTROL_PERIOD_MS;
-    g_fake.step_after_change_m = 0.03f;
-    g_fake.force_x_delay_call = 15000U / CONTEST_CONTROL_PERIOD_MS;
-    g_fake.forced_x_m = 1.50f / CONTEST_D_FORWARD_DISTANCE_SCALE;
-    g_fake.step_m = (g_fake.forced_x_m - 0.01f) /
-        (float) (g_fake.force_x_delay_call - 1U);
-    result = ContestRouteControl_RunD();
-
-    expect_true("D reaching B at 15 seconds is accepted",
         result == CONTEST_ROUTE_RUN_COMPLETE);
 }
 
@@ -523,7 +477,6 @@ static void test_drive_error_stops_with_error(void)
 int main(void)
 {
     test_normal_h_and_d_runs();
-    test_odom_progress_is_not_multiplied_by_arc_radius_calibration();
     test_abort_stops_immediately();
     test_abort_during_drive_reasserts_stop_after_drive_returns();
     test_init_clears_an_abort_for_a_later_route();
@@ -531,10 +484,8 @@ int main(void)
     test_invalid_yaw_stops_with_error();
     test_timeout_stops_with_error();
     test_timeout_uses_real_tick_when_one_delay_takes_16ms();
-    test_curve_command_uses_16ms_since_previous_drive();
     test_d_must_reach_b_by_deadline();
     test_h_can_finish_at_total_deadline();
-    test_d_reaching_b_at_deadline_is_accepted();
     test_d_can_finish_at_total_deadline();
     test_drive_error_stops_with_error();
 

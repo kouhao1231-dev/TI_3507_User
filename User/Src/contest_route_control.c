@@ -64,22 +64,34 @@ void ContestRouteControl_GetTelemetry(ContestRouteTelemetry *telemetry)
     telemetry->result = s_telemetry.result;
 }
 
-/*
- * H/D 共用的阻塞式比赛执行器。
- *
- * 每 8ms 读取一次 IMU/里程计、累计实际位移并连续流式下发速度。
- * B/C/D 只切换参考曲率，不停车；仅完成、K5、超时、里程异常或驱动
- * 错误会调用 Dcar_Stop()。时间全部来自真实单调 tick。
- */
-static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
+/* H/D 各自的直线转弯触发原始里程；都集中在配置头文件顶部。 */
+static float contest_route_control_turn_trigger(ContestRouteMode mode)
 {
-    ContestRouteSpec spec;
-    ContestRouteReference reference;
-    DcarStatus status = DCAR_STATUS_OK;
-    ContestRouteRunResult result = CONTEST_ROUTE_RUN_INVALID_MODE;
-    float start_x;
-    float start_y;
-    float start_yaw;
+    return (mode == CONTEST_ROUTE_H) ?
+        CONTEST_H_TURN_TRIGGER_RAW_ODOM_M :
+        CONTEST_D_TURN_TRIGGER_RAW_ODOM_M;
+}
+
+/* H/D 各自真正传入 Dcar_Arc() 的指令半径。 */
+static float contest_route_control_arc_radius(ContestRouteMode mode)
+{
+    return (mode == CONTEST_ROUTE_H) ?
+        CONTEST_H_ARC_COMMAND_RADIUS_M :
+        CONTEST_D_ARC_COMMAND_RADIUS_M;
+}
+
+/*
+ * 执行一段 AB 或 CD 直线。
+ *
+ * 每 8ms 用 Dcar_Drive(speed, 0) 刷新直线速度，同时调用 Dcar_Service()
+ * 保持与 2024 实车程序一致。累计原始里程到达配置的触发值后立即返回，
+ * 不在本函数中停车，由上层紧接着切换到 Dcar_Arc()。
+ */
+static ContestRouteRunResult contest_route_control_run_straight(
+    ContestRouteMode mode, const ContestRouteSpec *spec,
+    ContestRouteSegment segment, float base_distance_m,
+    uint32_t route_start_tick_ms, float *distance_m, DcarStatus *last_status)
+{
     float last_x;
     float last_y;
     float x;
@@ -88,15 +100,87 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
     float dx;
     float dy;
     float ds;
-    float distance_m = 0.0f;
-    float total_m;
-    float stop_threshold_m;
-    float command_period_s;
-    uint32_t start_tick_ms;
-    uint32_t last_drive_tick_ms;
+    float raw_progress_m = 0.0f;
+    float raw_trigger_m = contest_route_control_turn_trigger(mode);
     uint32_t now_tick_ms;
+    uint32_t elapsed_ms;
+
+    if ((spec == NULL) || (distance_m == NULL) || (last_status == NULL) ||
+        (isfinite(raw_trigger_m) == 0) || (raw_trigger_m <= 0.0f)) {
+        return CONTEST_ROUTE_RUN_INVALID_MODE;
+    }
+
+    Dcar_GetOdom(&last_x, &last_y, &yaw);
+    if ((isfinite(last_x) == 0) || (isfinite(last_y) == 0) ||
+        (isfinite(yaw) == 0)) {
+        return CONTEST_ROUTE_RUN_ODOM_JUMP;
+    }
+
+    for (;;) {
+        now_tick_ms = DcarApi_GetTickMs();
+        elapsed_ms = now_tick_ms - route_start_tick_ms;
+        if (s_abort_requested != 0U) {
+            return CONTEST_ROUTE_RUN_ABORTED;
+        }
+        Dcar_GetOdom(&x, &y, &yaw);
+        if ((isfinite(x) == 0) || (isfinite(y) == 0) ||
+            (isfinite(yaw) == 0)) {
+            return CONTEST_ROUTE_RUN_ODOM_JUMP;
+        }
+        dx = x - last_x;
+        dy = y - last_y;
+        ds = hypotf(dx, dy);
+        if ((isfinite(ds) == 0) || (ds > CONTEST_MAX_ODOM_STEP_M)) {
+            return CONTEST_ROUTE_RUN_ODOM_JUMP;
+        }
+        raw_progress_m += ds;
+        *distance_m = base_distance_m +
+            (raw_progress_m * spec->forward_distance_scale);
+        last_x = x;
+        last_y = y;
+        contest_route_control_set_telemetry(mode, segment, *distance_m,
+            elapsed_ms, 1U, *last_status, CONTEST_ROUTE_RUN_IDLE);
+
+        if (raw_progress_m >= raw_trigger_m) {
+            return CONTEST_ROUTE_RUN_COMPLETE;
+        }
+        if ((mode == CONTEST_ROUTE_D) &&
+            (elapsed_ms >= CONTEST_D_B_DEADLINE_MS) &&
+            (segment == CONTEST_SEGMENT_AB)) {
+            return CONTEST_ROUTE_RUN_TIMEOUT;
+        }
+        if (elapsed_ms >= spec->timeout_ms) {
+            return CONTEST_ROUTE_RUN_TIMEOUT;
+        }
+
+        *last_status = Dcar_Drive(spec->speed_mps, 0.0f);
+        if (s_abort_requested != 0U) {
+            Dcar_Stop();
+            return CONTEST_ROUTE_RUN_ABORTED;
+        }
+        if (*last_status != DCAR_STATUS_OK) {
+            return CONTEST_ROUTE_RUN_DRIVE_ERROR;
+        }
+
+        Dcar_Service();
+        Dcar_Delay(CONTEST_CONTROL_PERIOD_MS);
+    }
+}
+
+/*
+ * H/D 共用顺序执行器：AB 直线 → BC 圆弧 → CD 直线 → DA 圆弧。
+ * 圆弧整段只调用 Dcar_Arc()，圆弧完成返回后才恢复 Dcar_Drive()。
+ */
+static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
+{
+    ContestRouteSpec spec;
+    DcarStatus status = DCAR_STATUS_OK;
+    ContestRouteRunResult result = CONTEST_ROUTE_RUN_INVALID_MODE;
+    float distance_m = 0.0f;
+    float arc_m;
+    float arc_command_radius_m;
+    uint32_t start_tick_ms;
     uint32_t elapsed_ms = 0U;
-    uint8_t first_drive = 1U;
 
     if (ContestRoute_GetSpec(mode, &spec) == 0) {
         contest_route_control_set_telemetry(mode, CONTEST_SEGMENT_DONE, 0.0f,
@@ -104,119 +188,67 @@ static ContestRouteRunResult contest_route_control_run(ContestRouteMode mode)
         return result;
     }
 
+    arc_m = CONTEST_PI_F * spec.radius_m;
+    arc_command_radius_m = contest_route_control_arc_radius(mode);
     start_tick_ms = DcarApi_GetTickMs();
-    last_drive_tick_ms = start_tick_ms;
-    Dcar_GetOdom(&start_x, &start_y, &start_yaw);
-    if ((isfinite(start_x) == 0) || (isfinite(start_y) == 0) ||
-        (isfinite(start_yaw) == 0) ||
-        (ContestRoute_Evaluate(mode, distance_m, &reference) == 0)) {
-        result = CONTEST_ROUTE_RUN_ODOM_JUMP;
-        contest_route_control_set_telemetry(mode, CONTEST_SEGMENT_DONE,
-            distance_m, elapsed_ms, 0U, status, result);
-        Dcar_Stop();
-        return result;
+    contest_route_control_set_telemetry(mode, CONTEST_SEGMENT_AB, 0.0f,
+        0U, 1U, status, CONTEST_ROUTE_RUN_IDLE);
+
+    result = contest_route_control_run_straight(mode, &spec,
+        CONTEST_SEGMENT_AB, 0.0f, start_tick_ms, &distance_m, &status);
+    if (result != CONTEST_ROUTE_RUN_COMPLETE) {
+        goto finish;
     }
 
-    total_m = ContestRoute_TotalLength(&spec);
-    stop_threshold_m = total_m - spec.stop_lead_m;
-    last_x = start_x;
-    last_y = start_y;
-    contest_route_control_set_telemetry(mode, reference.segment, distance_m,
+    distance_m = spec.straight_m;
+    elapsed_ms = DcarApi_GetTickMs() - start_tick_ms;
+    contest_route_control_set_telemetry(mode, CONTEST_SEGMENT_BC, distance_m,
         elapsed_ms, 1U, status, CONTEST_ROUTE_RUN_IDLE);
-
-    for (;;) {
-        now_tick_ms = DcarApi_GetTickMs();
-        elapsed_ms = now_tick_ms - start_tick_ms;
-        if (s_abort_requested != 0U) {
-            result = CONTEST_ROUTE_RUN_ABORTED;
-            break;
-        }
-        Dcar_GetOdom(&x, &y, &yaw);
-        if ((isfinite(x) == 0) || (isfinite(y) == 0) ||
-            (isfinite(yaw) == 0)) {
-            result = CONTEST_ROUTE_RUN_ODOM_JUMP;
-            Dcar_Stop();
-            break;
-        }
-        dx = x - last_x;
-        dy = y - last_y;
-        ds = hypotf(dx, dy);
-        if ((isfinite(ds) == 0) || (ds > CONTEST_MAX_ODOM_STEP_M)) {
-            result = CONTEST_ROUTE_RUN_ODOM_JUMP;
-            Dcar_Stop();
-            break;
-        }
-        /*
-         * 世界坐标增量先合成为不依赖赛道朝向的原始路径长度，再统一乘
-         * 2024 前向距离标定 2.02。2.06/2.22 分别只属于横向诊断日志
-         * 和 Dcar_Arc() 半径指令，不能在这里再次参与路线进度。
-         */
-        distance_m += ds * spec.forward_distance_scale;
-        if ((isfinite(distance_m) == 0) ||
-            (ContestRoute_Evaluate(mode, distance_m, &reference) == 0)) {
-            result = CONTEST_ROUTE_RUN_ODOM_JUMP;
-            Dcar_Stop();
-            break;
-        }
-        last_x = x;
-        last_y = y;
-        contest_route_control_set_telemetry(mode, reference.segment, distance_m,
-            elapsed_ms, 1U, status, CONTEST_ROUTE_RUN_IDLE);
-        if (distance_m >= stop_threshold_m) {
-            result = CONTEST_ROUTE_RUN_COMPLETE;
-            Dcar_Stop();
-            break;
-        }
-        if ((mode == CONTEST_ROUTE_D) &&
-            (elapsed_ms >= CONTEST_D_B_DEADLINE_MS) &&
-            (reference.segment == CONTEST_SEGMENT_AB)) {
-            result = CONTEST_ROUTE_RUN_TIMEOUT;
-            Dcar_Stop();
-            break;
-        }
-        if (elapsed_ms >= spec.timeout_ms) {
-            result = CONTEST_ROUTE_RUN_TIMEOUT;
-            Dcar_Stop();
-            break;
-        }
-
-        command_period_s = (first_drive != 0U) ?
-            CONTEST_CONTROL_PERIOD_S :
-            (float) (now_tick_ms - last_drive_tick_ms) * 0.001f;
-        /*
-         * Dcar_Drive() 仍接收今年设置的低速；曲率前馈使用同一个 2.02
-         * 前向标定，确保路线进度和目标航向采用同一套距离模型。
-         */
-        status = Dcar_Drive(spec.speed_mps,
-            ContestRoute_ComputeYawDelta(
-                spec.speed_mps * spec.forward_distance_scale,
-                reference.curvature_per_m,
-                start_yaw + reference.relative_yaw_rad, yaw,
-                command_period_s));
-        if (s_abort_requested != 0U) {
-            result = CONTEST_ROUTE_RUN_ABORTED;
-            Dcar_Stop();
-            break;
-        }
-        if (status != DCAR_STATUS_OK) {
-            result = CONTEST_ROUTE_RUN_DRIVE_ERROR;
-            Dcar_Stop();
-            break;
-        }
-
-        first_drive = 0U;
-        last_drive_tick_ms = now_tick_ms;
-        Dcar_Delay(CONTEST_CONTROL_PERIOD_MS);
-        elapsed_ms = DcarApi_GetTickMs() - start_tick_ms;
-        contest_route_control_set_telemetry(mode, reference.segment, distance_m,
-            elapsed_ms, 1U, status, CONTEST_ROUTE_RUN_IDLE);
+    status = Dcar_Arc(arc_command_radius_m,
+        -spec.half_arc_yaw_rad, spec.speed_mps);
+    if (s_abort_requested != 0U) {
+        result = CONTEST_ROUTE_RUN_ABORTED;
+        goto finish;
+    }
+    if (status != DCAR_STATUS_OK) {
+        result = CONTEST_ROUTE_RUN_DRIVE_ERROR;
+        goto finish;
     }
 
-    if (result == CONTEST_ROUTE_RUN_COMPLETE) {
-        reference.segment = CONTEST_SEGMENT_DONE;
+    distance_m = spec.straight_m + arc_m;
+    result = contest_route_control_run_straight(mode, &spec,
+        CONTEST_SEGMENT_CD, distance_m, start_tick_ms, &distance_m, &status);
+    if (result != CONTEST_ROUTE_RUN_COMPLETE) {
+        goto finish;
     }
-    contest_route_control_set_telemetry(mode, reference.segment, distance_m,
-        elapsed_ms, 0U, status, result);
+
+    distance_m = (2.0f * spec.straight_m) + arc_m;
+    elapsed_ms = DcarApi_GetTickMs() - start_tick_ms;
+    contest_route_control_set_telemetry(mode, CONTEST_SEGMENT_DA, distance_m,
+        elapsed_ms, 1U, status, CONTEST_ROUTE_RUN_IDLE);
+    status = Dcar_Arc(arc_command_radius_m,
+        -spec.half_arc_yaw_rad, spec.speed_mps);
+    if (s_abort_requested != 0U) {
+        result = CONTEST_ROUTE_RUN_ABORTED;
+        goto finish;
+    }
+    if (status != DCAR_STATUS_OK) {
+        result = CONTEST_ROUTE_RUN_DRIVE_ERROR;
+        goto finish;
+    }
+
+    distance_m = ContestRoute_TotalLength(&spec);
+    result = CONTEST_ROUTE_RUN_COMPLETE;
+
+finish:
+    elapsed_ms = DcarApi_GetTickMs() - start_tick_ms;
+    if (s_abort_requested == 0U) {
+        Dcar_Stop();
+    }
+    contest_route_control_set_telemetry(mode,
+        (result == CONTEST_ROUTE_RUN_COMPLETE) ?
+            CONTEST_SEGMENT_DONE : s_telemetry.segment,
+        distance_m, elapsed_ms, 0U, status, result);
     return result;
 }
 

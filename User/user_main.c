@@ -3,6 +3,7 @@
  *
  * 运动只依赖 DCar 内核、TI 开发板 K1/K2 和路线控制器。OLED、蜂鸣器、
  * RGB、UART、光电等可选外设不参与初始化，也不会成为小车启动条件。
+ * 实车转弯触发里程、圆弧半径和速度统一在 User/Inc/contest_route_config.h。
  */
 
 #include "dcar_api.h"

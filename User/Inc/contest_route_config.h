@@ -10,9 +10,9 @@
  *   2.22 只用于 Dcar_Arc() 的“题面半径/指令半径”修正；
  *   3.12 rad 是单个大半圆的有效目标转角。
  *
- * 今年为保证 B/C/D 连续行驶，使用流式 Dcar_Drive()。2.02 统一用于
- * 原始前向里程和圆弧速度前馈，3.12 用于半圆目标角。2.06 和 2.22
- * 保留原值供诊断或改回 Dcar_Arc() 时参考，严禁把二者乘到路线里程上。
+ * 今年直线使用流式 Dcar_Drive()，两个半圆直接使用 Dcar_Arc()。
+ * 2.02 用于把直线原始里程换算为物理进度；2.22 用于圆弧指令半径；
+ * 3.12 用于半圆转角；2.06 仍只保留为旧版横向诊断值。
  */
 #define CONTEST_PI_F                    3.14159265358979323846f
 #define CONTEST_CONTROL_PERIOD_S        0.008f
@@ -24,6 +24,20 @@
 #define CONTEST_2024_LATERAL_LOG_SCALE  2.06f
 #define CONTEST_2024_ARC_RADIUS_SCALE   2.22f
 #define CONTEST_2024_HALF_ARC_YAW_RAD   3.12f
+
+/*
+ * ======================== 实车优先修改这里 ========================
+ *
+ * 直线转圆弧的触发值是 Dcar_GetOdom() 的“原始累计里程”，不是题面 1.50m。
+ * 数值调小：更早转弯；数值调大：更晚转弯。
+ *
+ * 圆弧直接调用 Dcar_Arc(指令半径, -3.12, 速度)。
+ * 指令半径调小：转弯更紧；调大：转弯更宽。
+ */
+#define CONTEST_H_TURN_TRIGGER_RAW_ODOM_M 0.7426f
+#define CONTEST_H_ARC_COMMAND_RADIUS_M    0.2252f
+#define CONTEST_D_TURN_TRIGGER_RAW_ODOM_M 0.7426f
+#define CONTEST_D_ARC_COMMAND_RADIUS_M    0.3378f
 
 /* H 题：AB/CD=1.50m，BC/DA 半径=0.50m。 */
 #define CONTEST_H_STRAIGHT_M            1.50f
@@ -52,7 +66,7 @@
 #define CONTEST_D_B_DEADLINE_MS         15000U
 #define CONTEST_D_TIMEOUT_MS            90000U
 
-/* 航向误差闭环增益，以及每个 8ms 指令允许的最大目标航向增量。 */
+/* 下面两个参数只供路线数学测试/备用流式转弯使用，当前 Dcar_Arc 不读取。 */
 #define CONTEST_HEADING_KP              2.0f
 #define CONTEST_MAX_YAW_DELTA_RAD       0.02f
 
