@@ -46,10 +46,9 @@ DCAR_G3507_User.uvprojx  ← Keil 图形工程(双击打开)
 License 位于 `0x1F000`，IMU 标定位于 `0x1F800/0x1FC00`。Keil 下载时必须选择
 `Erase Sectors`，不要选择 `Erase Full Chip`。如果激活后又执行了全片擦除，请重新激活。
 
-用户程序也可以调用 `Dcar_IsActivated()`：返回 `1` 表示当前芯片的 License 已通过
-内核运行时验签，返回 `0` 表示未激活、License 丢失或 License 不属于当前芯片。
-例程会在 `Dcar_System_Init()` 后调用 `Dcar_PrintActivationStatus()`，从 UART0@115200
-直接输出 `[DCAR] Activation: ACTIVATED` 或 `[DCAR] Activation: NOT ACTIVATED`。
+需要诊断时可以临时调用 `Dcar_IsActivated()` 或 `Dcar_PrintActivationStatus()` 查询 License。
+2026 H/D 无头比赛入口不调用这两个接口，也不以它们的返回值拦截 K1/K2；真正的 License 校验由
+运动内核在收到 `Dcar_Drive()` 时自行执行。
 
 `Dcar_Move()`、`Dcar_Arc()` 和 `Dcar_Drive()` 都返回 `DcarStatus`。例如前进 10cm
 却未执行时，`DCAR_STATUS_NOT_ACTIVATED` 表示 License 未通过运行时验签，
@@ -63,7 +62,27 @@ Dcar_Move(0.5f, 0, 0, 0.3f);   // 前进 0.5m
 Dcar_Move(0, 0, 1.5708f, 2.0f);// 原地左转 90°
 Dcar_Arc(0.20f, 1.5708f, 0.15f);// 半径0.2m 走 90° 弧
 ```
-改 `User/user_main.c` 里的 `g_run_demo` 为 0 可关掉上电演示。
+## 2026 H/D 固定路线入口
+
+烧录并激活后，**TI 开发板** `K1`（PA18）直接启动 H 路线、**TI 开发板** `K2`（PB21）直接启动
+D 路线，转接板 `K5` 随时急停。比赛入口是纯无头模式，不初始化或调用 OLED、蜂鸣器、RGB、UART
+和传感器模块；这些可选外设是否安装、是否正常都不参与运动判定。完整几何、参数标定、烧录和风险说明见
+[`docs/2026_H_D_FIXED_ROUTE_GUIDE.md`](docs/2026_H_D_FIXED_ROUTE_GUIDE.md)。该功能只使用里程计与 IMU，
+不依赖光电或灰度模块；H 题对“只能使用红外光电模块”的题面条款存在解释风险，赛前须向赛区确认。
+直线用 `Dcar_Drive()`，达到可调原始里程后用 `Dcar_Arc()` 完成半圆，再恢复直线速度指令。
+实车直接修改 `User/Inc/contest_route_config.h` 顶部“实车优先修改这里”：触发里程调小会更早转，
+调大会更晚转；圆弧指令半径调小会转得更紧，调大会转得更宽；`ARC_YAW_RAD` 调大转得更多，
+调小转得更少。
+
+当前实车验证参数：
+
+| 题目 | 直线转弯触发原始里程 | 圆弧指令半径 | 圆弧转角 |
+| --- | ---: | ---: | ---: |
+| H | 0.72 m | 0.23 m | 3.195 rad |
+| D | 0.74 m | 0.35 m | 3.22 rad |
+
+执行顺序为 `AB 直线 → BC 圆弧 → CD 直线 → DA 圆弧 → A 点停车`。K1 启动 H，K2 启动 D，
+转接板 K5 随时急停。所有实车参数都集中在 `User/Inc/contest_route_config.h` 顶部。
 
 > ⚠ `User/user_main.c` 顶部列了内核已占用的资源(定时器/SPI/UART/引脚/中断优先级/Flash扇区),
 > 你加自己的外设时避开它们。

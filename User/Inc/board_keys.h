@@ -16,11 +16,11 @@ extern "C" {
 #define BOARD_KEY5_MASK 0x10U
 
 typedef enum {
-    BOARD_KEY_1 = 0,
-    BOARD_KEY_2,
-    BOARD_KEY_3,
-    BOARD_KEY_4,
-    BOARD_KEY_5,
+    BOARD_KEY_1 = 0, /* TI development-board K1: PA18, active high. */
+    BOARD_KEY_2,     /* TI development-board K2: PB21, active low. */
+    BOARD_KEY_3,     /* Adapter-board K3. */
+    BOARD_KEY_4,     /* Adapter-board K4. */
+    BOARD_KEY_5,     /* Adapter-board K5 emergency stop. */
 } BoardKey;
 
 void BoardKeys_Init(void);

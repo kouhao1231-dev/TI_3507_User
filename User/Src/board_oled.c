@@ -100,6 +100,7 @@ static const uint8_t *oled_font5x7(char c)
     static const uint8_t blank[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
     static const uint8_t dash[5] = {0x08, 0x08, 0x08, 0x08, 0x08};
     static const uint8_t colon[5] = {0x00, 0x36, 0x36, 0x00, 0x00};
+    static const uint8_t dot[5] = {0x00, 0x60, 0x60, 0x00, 0x00};
     static const uint8_t zero[5] = {0x3E, 0x51, 0x49, 0x45, 0x3E};
     static const uint8_t one[5] = {0x00, 0x42, 0x7F, 0x40, 0x00};
     static const uint8_t two[5] = {0x42, 0x61, 0x51, 0x49, 0x46};
@@ -143,6 +144,9 @@ static const uint8_t *oled_font5x7(char c)
     }
     if (c == ':') {
         return colon;
+    }
+    if (c == '.') {
+        return dot;
     }
     return blank;
 }

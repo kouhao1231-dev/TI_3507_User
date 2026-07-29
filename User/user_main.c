@@ -1,127 +1,110 @@
-/* ============================================================================
- *  DCAR G3507 —— 用户主程序 (这个文件是给你改的)
- * ----------------------------------------------------------------------------
- *  小车底层(时钟/电机/编码器/IMU/里程计/锁头串级/速度PID/节点锁)全部封装在
- *  内核库 libdcar_core 里, 已经在中断里自动运行。你只在这个文件里写应用逻辑,
- *  通过 dcar_api.h 的函数控制小车。完整用法见 DCAR_G3507_用户API说明.md。
+/*
+ * 2026 电赛 H/D 固定路线无头主程序。
  *
- *  ┌──────────────────────── 三层结构 ────────────────────────┐
- *  │ 内核(8ms中断, 自动跑, 你碰不到也不用碰)                   │
- *  │ 用户定时器回调 UserLoop_*(1kHz派发, 只放短的非阻塞任务)   │
- *  │ main()(这里, 写比赛流程: Move/Arc/Delay 顺序执行)         │
- *  └──────────────────────────────────────────────────────────┘
- *
- *  ╔═══════════════════ ⚠ 这些底层资源已被内核占用, 别碰/别复用 ⚠ ═══════════════════╗
- *  ║ 定时器 : TIMA0(电机PWM)  TIMG0(用户1kHz定时器)  SysTick(125Hz控制环)            ║
- *  ║ SPI    : SPI1 = IMU      (引脚 PINCM24/25/26 + CS)                              ║
- *  ║ UART   : UART0 = 调试遥测 (引脚 PINCM21/22)                                      ║
- *  ║ 编码器 : M1=PB2/PB3, M2=PA22/PA23  (双边沿外部中断 INT_GROUP1)             ║
- *  ║ 电机方向: GPIOB  PB10 / PB11 / PB13 / PB14                                       ║
- *  ║ 电机PWM : PINCM57(M1 CCP3)  PA9/PINCM20(M2 CCP1)                                 ║
- *  ║ 中断优先级: GPIOA/B=0  SysTick=1  TIMG0=3  →  你的中断别用 0/1 级(会扰动内核)     ║
- *  ║ Flash  : 0x1F800 / 0x1FC00(IMU标定)  0x1F000(license)  →  绝对不要擦这几个扇区   ║
- *  ║ 软规矩 : UserLoop 回调里禁止调阻塞 API(Move/Arc/Delay)/死循环                    ║
- *  ║ 你可以自由使用上面没列出的外设/引脚/定时器(ADC、其它UART、空闲GPIO 等)。        ║
- *  ╚═══════════════════════════════════════════════════════════════════════════════╝
- * ========================================================================== */
+ * 运动只依赖 DCar 内核、TI 开发板 K1/K2 和路线控制器。OLED、蜂鸣器、
+ * RGB、UART、光电等可选外设不参与初始化，也不会成为小车启动条件。
+ * 实车转弯触发里程、圆弧半径和速度统一在 User/Inc/contest_route_config.h。
+ */
 
 #include "dcar_api.h"
-#include "board_buzzer.h"   /* 外设: 蜂鸣器 */
-#include "board_oled.h"     /* 外设: OLED 屏 */
-#include "board_keys.h"     /* 外设: 五个按键 */
+#include "board_keys.h"
+#include "contest_route_control.h"
 
-/* ===== 上电演示开关: 1=上电跑一遍 run_demo(); 0=只锁头待命, 跑你自己的流程 ===== */
-static volatile int g_run_demo = 0;
+#include <stdint.h>
 
-/* ===== 外设演示开关: 1=蜂鸣器/OLED/按键 上电演示(不动车, 按键→滴一声+OLED显示); 0=关 ===== */
-static volatile int g_periph_demo = 1;
+typedef enum {
+    ROUTE_REQUEST_NONE = 0,
+    ROUTE_REQUEST_H,
+    ROUTE_REQUEST_D
+} RouteRequest;
 
-/* 演示序列: 右前12cm → 左前12cm → 直退回原点(全程朝向不变)。验证 Move + 里程计 + 锁头。 */
-static void run_demo_sequence(void){
-    Dcar_Delay(1000U);                          /* 上电先静置 1s, 让零偏/姿态稳 */
-    Dcar_Move( 0.0849f, -0.0849f, 0.0f, 0.18f); /* 1) 右前方 45° 走 12cm */
-    Dcar_Delay(500U);
-    Dcar_Move( 0.0849f,  0.0849f, 0.0f, 0.18f); /* 2) 左前方 45° 走 12cm */
-    Dcar_Delay(500U);
-    Dcar_Move(-0.1697f, 0.0f,    0.0f, 0.30f);  /* 3) 直退 ~17cm 回原点(dy=0,Δyaw=0 → 纯倒车不掉头) */
-    Dcar_Stop();
-}
+/*
+ * 这三个量只负责“按键请求—主线程执行”的最小状态同步。
+ * 它们不包含 OLED、蜂鸣器、RGB、UART 或传感器状态。
+ */
+static volatile uint8_t g_route_running;
+static volatile RouteRequest g_route_request;
+static volatile uint8_t g_stop_epoch;
 
-/* ===== 用户周期回调(内核 1kHz 派发, 默认空。只放很短的非阻塞任务) ===== */
-void UserLoop_100Hz(uint32_t now_ms){                   /* 10ms  一次 */
-    (void)now_ms;
-    if(g_periph_demo){
-        BoardKeys_Task100Hz();    /* 按键扫描 + 消抖 */
-        BoardBuzzer_Task1kHz();   /* 蜂鸣器定时关(此处 100Hz 派发, 节拍约略) */
-    }
-}
-void UserLoop_50Hz (uint32_t now_ms){ (void)now_ms; }   /* 20ms  一次 */
-void UserLoop_20Hz (uint32_t now_ms){ (void)now_ms; }   /* 50ms  一次 */
-void UserLoop_10Hz (uint32_t now_ms){                   /* 100ms 一次 */
-    (void)now_ms;
-    if(g_periph_demo){
-        /* 按键按下 → 滴一声 + OLED 显示第几个键 */
-        for(uint8_t k=0; k<BOARD_KEYS_COUNT; k++){
-            if(BoardKeys_WasPressed((BoardKey)k)){
-                BoardBuzzer_BeepOk();
-                BoardOled_SetNumber(2, "KEY", (int32_t)(k+1));
-            }
+/*
+ * 100Hz 按键入口：
+ *   开发板 K1 产生 H 请求，开发板 K2 产生 D 请求；
+ *   转接板 K5 优先级最高，清除待运行请求并立即停车。
+ * 回调只登记请求，不在中断上下文中执行整圈阻塞路线。
+ */
+void UserLoop_100Hz(uint32_t now_ms)
+{
+    uint8_t start_h;
+    uint8_t start_d;
+
+    (void) now_ms;
+    BoardKeys_Task100Hz();
+    start_h = BoardKeys_WasPressed(BOARD_KEY_1);
+    start_d = BoardKeys_WasPressed(BOARD_KEY_2);
+
+    if (BoardKeys_WasPressed(BOARD_KEY_5) != 0U) {
+        g_route_request = ROUTE_REQUEST_NONE;
+        g_stop_epoch++;
+        ContestRouteControl_RequestAbort();
+    } else if ((g_route_running == 0U) &&
+        (g_route_request == ROUTE_REQUEST_NONE)) {
+        if (start_h != 0U) {
+            g_route_request = ROUTE_REQUEST_H;
+        } else if (start_d != 0U) {
+            g_route_request = ROUTE_REQUEST_D;
         }
-        BoardOled_Task10Hz();     /* OLED 限速刷新 */
     }
+}
+
+/* 无头比赛固件不使用其余周期槽，保留空实现以满足 DCar API。 */
+void UserLoop_50Hz(uint32_t now_ms)
+{
+    (void) now_ms;
+}
+
+void UserLoop_20Hz(uint32_t now_ms)
+{
+    (void) now_ms;
+}
+
+void UserLoop_10Hz(uint32_t now_ms)
+{
+    (void) now_ms;
 }
 
 int main(void)
 {
-    Dcar_System_Init();          /* ① 启动全部内核(必须第一句; 之后底层在中断里自动跑) */
-    Dcar_PrintActivationStatus();/* UART0@115200: ACTIVATED / NOT ACTIVATED */
-
-    /* 可选: 用返回值决定未激活时是否停止后续流程。1=已激活, 0=未激活/验签失败。
-     *   if(!Dcar_IsActivated()){
-     *       for(;;){ Dcar_Service(); }   // 不执行后续运动流程
-     *   }
+    /*
+     * 主函数只初始化运动必需模块。
+     * 路线执行期间 K5 仍由 100Hz 中断抢占；一次运行结束后回到待机，
+     * 不会因为上一次按键长按或可选外设状态自动重跑。
      */
+    Dcar_System_Init();
+    BoardKeys_Init();
+    ContestRouteControl_Init();
 
-    /* ===== 陀螺零偏校准(空板首次烧录后做一次) =====================================
-     * 全新芯片 flash 没存过零偏, 开机自动采样那一秒如果车没放稳, 会采到错零偏 →
-     * 表现为"原地自转 / 不锁头"。解决: 把车放平、静止, 取消下面这行注释, 烧一次跑一遍
-     * (约4秒, 期间车自动停住采样), 真零偏存进 flash; 之后开机自动读, 把这行再注释回去即可。 */
-    // Dcar_GyroCalibrate();
+    for (;;) {
+        uint8_t stop_epoch = g_stop_epoch;
+        RouteRequest request = g_route_request;
 
+        if (request != ROUTE_REQUEST_NONE) {
+            /*
+             * 先占用运行状态并清空请求，再重置控制器。
+             * stop_epoch 防止 K5 恰好落在“取请求—开始路线”窗口时误启动。
+             */
+            g_route_running = 1U;
+            g_route_request = ROUTE_REQUEST_NONE;
+            ContestRouteControl_Init();
 
-    /* ===== 外设上电: 蜂鸣器 / OLED / 按键 初始化 + 开机提示 ===== */
-    if(g_periph_demo){
-        BoardBuzzer_Init();
-        BoardKeys_Init();
-        BoardOled_Init();
-        BoardOled_SetLine(0, "DCAR G3507");
-        BoardOled_SetLine(1, "Peripherals OK");
-        BoardBuzzer_On(); Dcar_Delay(120U); BoardBuzzer_Off();  /* 开机滴一声 */
-    }
-
-    if(g_run_demo){              /* ② 上电演示(把 g_run_demo 改 0 可关掉) */
-        run_demo_sequence();
-    }
-
-    /* ③ 你的比赛流程写这里。Move/Arc 自带阻塞(走完才返回), 直接一条接一条:
-     *
-     *   DcarStatus result = Dcar_Move(0.5f, 0.0f, 0.0f, 0.3f); // 前进 0.5m
-     *   // result==DCAR_STATUS_OK 正常完成; -1 未激活; -4 IMU异常; -5 编码器无动作
-     *   Dcar_Move(0,    0,    1.5708f, 2.0f);// 原地左转 90°
-     *   Dcar_Arc (0.20f, 1.5708f, 0.15f);    // 半径0.2m 走 90° 弧
-     *   Dcar_Delay(500);                     // 停顿 0.5s
-     *
-     * 流式遥控(非阻塞)就持续发 Dcar_Drive + 短 Dcar_Delay:
-     *   for(int i=0;i<300;i++){ Dcar_Drive(0.2f, 0.0f); Dcar_Delay(5); } // 直行1.5s
-     *
-     * 读里程计: float x,y,yaw; Dcar_GetOdom(&x,&y,&yaw);
-     */
-
-    /* ④ 主循环: 必须周期调 Dcar_Service()(让后台 calib 落盘 + 串口遥测照常跑)。
-     *    不要在这写永远出不来的裸 while(1) 而不调 Service。 */
-    for(;;){
+            if (g_stop_epoch == stop_epoch) {
+                if (request == ROUTE_REQUEST_H) {
+                    (void) ContestRouteControl_RunH();
+                } else {
+                    (void) ContestRouteControl_RunD();
+                }
+            }
+            g_route_running = 0U;
+        }
         Dcar_Service();
-        /* 这里也可以放非阻塞应用逻辑, 例如按条件急停:
-         *   // if(some_condition){ Dcar_Stop(); } */
     }
 }
